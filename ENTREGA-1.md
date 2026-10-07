@@ -464,3 +464,6 @@ La comunicación síncrona resulta adecuada cuando el resultado de otro servicio
 La comunicación asíncrona permite desacoplar la generación de eventos de la gestión de notificaciones y evita que el Servicio de Inventario tenga que esperar a que el Servicio de Notificaciones termine su procesamiento.
 
 Esta es una versión inicial de D5. Los timeouts, reintentos, idempotencia y tratamiento de errores serán definidos con mayor detalle durante la implementación.
+
+
+Las decisiones D1, D3, D5 y D8 se mantienen ahora en archivos independientes dentro de docs/adr/. Este documento se conserva como registro del borrador original de la Entrega 1.

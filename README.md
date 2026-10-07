@@ -22,10 +22,10 @@ Stock Volcamelli utiliza una arquitectura basada en microservicios.
 
 El sistema cuenta con cuatro microservicios de negocio:
 
-- User Service
-- Branch Service
-- Inventory Service
-- Notification Service
+- Servicio de Usuarios
+- Servicio de Sucursales
+- Servicio de Inventario
+- Servicio de Notificaciones
 
 Los servicios se encuentran detrás de un API Gateway.
 
@@ -39,7 +39,7 @@ La descripción detallada de la arquitectura se encuentra en:
 
 ## Microservicios
 
-### User Service
+### Servicio de Usuarios
 
 Responsable de la gestión de usuarios y roles del sistema.
 
@@ -48,11 +48,11 @@ Roles principales:
 - `ADMIN`
 - `OPERATOR`
 
-### Branch Service
+### Servicio de Sucursales
 
 Responsable de la gestión de las sucursales de la empresa.
 
-### Inventory Service
+### Servicio de Inventario
 
 Responsable de la gestión del inventario.
 
@@ -63,9 +63,9 @@ Incluye:
 - Movimientos de inventario.
 - Transferencias entre sucursales.
 
-El Inventory Service será la capacidad publicada por el grupo para la integración con otro grupo.
+El Servicio de Inventario será la capacidad publicada por el grupo para la integración con otro grupo. La capacidad publicada cubre la API funcional de Servicio de Inventario: gestión básica de productos, consulta de stock por sucursal, registro y consulta de movimientos, y transferencias entre sucursales. El contrato versionado enumera todas las operaciones. El contrato OpenAPI y las instrucciones del mock están en [docs/contracts/README.md](docs/contracts/README.md).
 
-### Notification Service
+### Servicio de Notificaciones
 
 Responsable de la gestión de las notificaciones relacionadas con el inventario.
 
@@ -106,13 +106,13 @@ Entre las principales reglas del dominio se encuentran:
 
 ## Integración
 
-El grupo publicará el `Inventory Service` como capacidad de integración para que otro grupo pueda consumir funcionalidades relacionadas con el inventario.
+El grupo publicará el `Servicio de Inventario` como capacidad de integración para que otro grupo pueda consumir funcionalidades relacionadas con el inventario.
 
 La capacidad publicada contará con un contrato formal y versionado.
 
 Los contratos de integración se documentarán en:
 
-`docs/contracts/`
+[docs/contracts/README.md](docs/contracts/README.md).
 
 ## Estructura del repositorio
 
@@ -125,10 +125,13 @@ Stock-Volcamelli/
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── adr/
-│   └── contracts/
+│   ├── contracts/
+│   │   ├── openapi.yaml
+│   │   └── mock/
+│   └── diagrams/
 ├── gateway/
 └── services/
-    ├── user-service/
-    ├── branch-service/
-    ├── inventory-service/
-    └── notification-service/
+    ├── servicio-usuarios/
+    ├── servicio-sucursales/
+    ├── servicio-inventario/
+    └── servicio-notificaciones/

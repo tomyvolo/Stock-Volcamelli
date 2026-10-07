@@ -66,7 +66,7 @@ Entre sus responsabilidades se encuentran:
 
 El sistema estará compuesto por cuatro microservicios de negocio.
 
-### User Service
+### Servicio de Usuarios
 
 Responsable de la gestión de usuarios y sus roles.
 
@@ -79,7 +79,7 @@ Entidades principales:
 
 ---
 
-### Branch Service
+### Servicio de Sucursales
 
 Responsable de la gestión de las sucursales de la empresa.
 
@@ -91,7 +91,7 @@ Entidad principal:
 
 ---
 
-### Inventory Service
+### Servicio de Inventario
 
 Responsable de la gestión del inventario.
 
@@ -109,11 +109,11 @@ Entidades principales:
 - StockMovement
 - Transfer
 
-El Inventory Service constituye una de las capacidades principales del sistema y será la capacidad publicada por el grupo para su integración con otros sistemas.
+El Servicio de Inventario constituye una de las capacidades principales del sistema y será la capacidad publicada por el grupo para su integración con otros sistemas.
 
 ---
 
-### Notification Service
+### Servicio de Notificaciones
 
 Responsable de gestionar las notificaciones generadas por eventos relacionados con el inventario.
 
@@ -216,7 +216,7 @@ Los microservicios se comunicarán mediante mecanismos síncronos y asíncronos 
 
 Las operaciones que requieran una respuesta inmediata utilizarán comunicación síncrona.
 
-Los cambios relevantes del inventario podrán generar eventos de dominio que serán comunicados de forma asíncrona al Notification Service.
+Los cambios relevantes del inventario podrán generar eventos de dominio que serán comunicados de forma asíncrona al Servicio de Notificaciones.
 
 El detalle de los mecanismos de comunicación, timeouts, reintentos, eventos e idempotencia será definido en la arquitectura y en los ADR correspondientes.
 
@@ -224,7 +224,7 @@ El detalle de los mecanismos de comunicación, timeouts, reintentos, eventos e i
 
 ## 9. Capacidad publicada
 
-El grupo publicará como capacidad de integración el **Inventory Service**.
+El grupo publicará como capacidad de integración el **Servicio de Inventario**.
 
 La capacidad permitirá que otros sistemas puedan utilizar las funcionalidades relacionadas con el inventario a través de un contrato formal y versionado.
 
@@ -243,10 +243,10 @@ El sistema contará con un API Gateway como punto de entrada para las aplicacion
 La arquitectura estará compuesta por:
 
 - API Gateway.
-- User Service.
-- Branch Service.
-- Inventory Service.
-- Notification Service.
+- Servicio de Usuarios.
+- Servicio de Sucursales.
+- Servicio de Inventario.
+- Servicio de Notificaciones.
 
 Cada microservicio será responsable de sus propios datos y no accederá directamente a la base de datos de otro microservicio.
 

@@ -6,10 +6,10 @@ Stock Volcamelli utiliza una **arquitectura distribuida basada en microservicios
 
 El sistema está compuesto por un **Frontend Web**, un **API Gateway** y cuatro microservicios de negocio:
 
-- User Service
-- Branch Service
-- Inventory Service
-- Notification Service
+- Servicio de Usuarios
+- Servicio de Sucursales
+- Servicio de Inventario
+- Servicio de Notificaciones
 
 El Frontend Web actúa como cliente del sistema y se comunica con los servicios a través del API Gateway.
 
@@ -47,9 +47,9 @@ Sus responsabilidades principales son:
 
 El Gateway no contiene la lógica principal del dominio. Las operaciones de negocio son responsabilidad de los microservicios correspondientes.
 
-### 2.3 User Service
+### 2.3 Servicio de Usuarios
 
-El User Service es responsable de la gestión de los usuarios y sus roles.
+El Servicio de Usuarios es responsable de la gestión de los usuarios y sus roles.
 
 Sus principales responsabilidades son:
 
@@ -62,11 +62,11 @@ Los roles definidos inicialmente son:
 - `ADMIN`
 - `OPERATOR`
 
-El User Service es propietario de los datos relacionados con los usuarios y roles.
+El Servicio de Usuarios es propietario de los datos relacionados con los usuarios y roles.
 
-### 2.4 Branch Service
+### 2.4 Servicio de Sucursales
 
-El Branch Service es responsable de la gestión de las sucursales de la empresa.
+El Servicio de Sucursales es responsable de la gestión de las sucursales de la empresa.
 
 Sus principales responsabilidades son:
 
@@ -74,11 +74,11 @@ Sus principales responsabilidades son:
 - Consultar información de las sucursales.
 - Proporcionar información de las sucursales a otros servicios cuando sea necesario.
 
-El Branch Service es propietario de los datos relacionados con las sucursales.
+El Servicio de Sucursales es propietario de los datos relacionados con las sucursales.
 
-### 2.5 Inventory Service
+### 2.5 Servicio de Inventario
 
-El Inventory Service es el servicio principal del dominio de inventario.
+El Servicio de Inventario es el servicio principal del dominio de inventario.
 
 Sus responsabilidades incluyen:
 
@@ -90,33 +90,33 @@ Sus responsabilidades incluyen:
 - Mantener las reglas de consistencia relacionadas con el inventario.
 - Generar eventos relacionados con cambios relevantes del stock.
 
-El Inventory Service es propietario de los datos relacionados con:
+El Servicio de Inventario es propietario de los datos relacionados con:
 
 - Productos.
 - Stock.
 - Movimientos de inventario.
 - Transferencias.
 
-El Inventory Service constituye además la **capacidad publicada por el grupo** para la integración con otros grupos.
+El Servicio de Inventario constituye además la **capacidad publicada por el grupo** para la integración con otros grupos.
 
-### 2.6 Notification Service
+### 2.6 Servicio de Notificaciones
 
-El Notification Service es responsable de gestionar las notificaciones generadas por eventos relevantes del sistema.
+El Servicio de Notificaciones es responsable de gestionar las notificaciones generadas por eventos relevantes del sistema.
 
 Inicialmente se contemplan los siguientes tipos:
 
 - `LOW_STOCK`
 - `OUT_OF_STOCK`
 
-Las notificaciones de stock se generan a partir de eventos producidos por el Inventory Service.
+Las notificaciones de stock se generan a partir de eventos producidos por el Servicio de Inventario.
 
-El Notification Service es propietario de los datos relacionados con las notificaciones.
+El Servicio de Notificaciones es propietario de los datos relacionados con las notificaciones.
 
 ## 3. Arquitectura interna de los microservicios
 
 Los microservicios no utilizarán necesariamente el mismo patrón de arquitectura interna. La elección depende de la complejidad y las responsabilidades de cada servicio.
 
-### User Service
+### Servicio de Usuarios
 
 Utilizará una **arquitectura en capas**.
 
@@ -126,9 +126,9 @@ La separación principal será:
 - Capa de aplicación/servicio.
 - Capa de persistencia.
 
-Este patrón resulta adecuado debido a que User Service posee responsabilidades relativamente simples relacionadas con la gestión de usuarios y roles.
+Este patrón resulta adecuado debido a que Servicio de Usuarios posee responsabilidades relativamente simples relacionadas con la gestión de usuarios y roles.
 
-### Branch Service
+### Servicio de Sucursales
 
 Utilizará una **arquitectura en capas**.
 
@@ -138,13 +138,13 @@ La estructura seguirá una separación entre:
 - Capa de aplicación/servicio.
 - Capa de persistencia.
 
-Branch Service presenta una lógica de negocio relativamente sencilla, por lo que no se considera necesario introducir una estructura arquitectónica más compleja.
+Servicio de Sucursales presenta una lógica de negocio relativamente sencilla, por lo que no se considera necesario introducir una estructura arquitectónica más compleja.
 
-### Inventory Service
+### Servicio de Inventario
 
 Utilizará una **arquitectura hexagonal**.
 
-Esta elección responde a que Inventory Service concentra las principales reglas de negocio del sistema y necesita interactuar con diferentes mecanismos externos, entre ellos:
+Esta elección responde a que Servicio de Inventario concentra las principales reglas de negocio del sistema y necesita interactuar con diferentes mecanismos externos, entre ellos:
 
 - Persistencia.
 - Comunicación con otros microservicios.
@@ -152,7 +152,7 @@ Esta elección responde a que Inventory Service concentra las principales reglas
 
 La arquitectura hexagonal permitirá mantener separada la lógica de dominio de los mecanismos externos utilizados por el servicio.
 
-### Notification Service
+### Servicio de Notificaciones
 
 Utilizará una **arquitectura en capas**.
 
@@ -172,10 +172,10 @@ Cada microservicio es responsable de sus propios datos.
 
 | Microservicio | Datos de los que es propietario |
 |---|---|
-| User Service | Usuarios y roles |
-| Branch Service | Sucursales |
-| Inventory Service | Productos, stock, movimientos y transferencias |
-| Notification Service | Notificaciones |
+| Servicio de Usuarios | Usuarios y roles |
+| Servicio de Sucursales | Sucursales |
+| Servicio de Inventario | Productos, stock, movimientos y transferencias |
+| Servicio de Notificaciones | Notificaciones |
 
 Ningún microservicio accederá directamente a la base de datos de otro microservicio.
 
@@ -183,13 +183,15 @@ Cuando un servicio necesite información perteneciente a otro servicio, utilizar
 
 ## 5. Comunicación entre servicios
 
+Los diagramas de contexto y contenedores están en diagrams/. Las decisiones correspondientes se registran en adr/ y el contrato publicado en contracts/.
+
 La arquitectura contempla comunicación tanto **síncrona como asíncrona**.
 
 ### 5.1 Comunicación síncrona
 
 Se utilizará comunicación síncrona cuando una operación necesite una respuesta inmediata de otro servicio.
 
-Un caso previsto es la comunicación entre Inventory Service y Branch Service para validar información de las sucursales involucradas en operaciones de inventario.
+Un caso previsto es la comunicación entre Servicio de Inventario y Servicio de Sucursales para validar información de las sucursales involucradas en operaciones de inventario.
 
 Las comunicaciones síncronas deberán contemplar posteriormente mecanismos de timeout y manejo de errores.
 
@@ -200,11 +202,11 @@ Se utilizará comunicación asíncrona para eventos que no requieran que el serv
 El principal flujo previsto es:
 
 ```text
-Inventory Service
+Servicio de Inventario
        |
        | Evento de cambio de stock
        v
 Message Broker
        |
        v
-Notification Service
+Servicio de Notificaciones
