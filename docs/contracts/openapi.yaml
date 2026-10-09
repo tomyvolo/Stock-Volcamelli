@@ -352,7 +352,7 @@ paths:
       tags: [Transfers]
       operationId: createTransfer
       summary: Transferir stock entre sucursales
-      description: La operación es atómica: descuenta en origen y acredita en destino, sin permitir stock negativo.
+      description: 'La operación es atómica: descuenta en origen y acredita en destino, sin permitir stock negativo.'
       security: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'

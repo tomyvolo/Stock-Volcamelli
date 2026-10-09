@@ -33,9 +33,7 @@ La comunicación entre los servicios podrá realizarse de forma síncrona o así
 
 Cada microservicio es responsable de sus propios datos y no accede directamente a la base de datos de otro servicio.
 
-La descripción detallada de la arquitectura se encuentra en:
-
-`docs/ARCHITECTURE.md`
+La descripción detallada de la arquitectura se encuentra en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Microservicios
 
@@ -116,7 +114,7 @@ Los contratos de integración se documentarán en:
 
 ## Estructura del repositorio
 
-El proyecto utiliza un único repositorio que contiene todos los componentes del sistema.
+El proyecto utiliza un único repositorio que contendrá todos los componentes del sistema. La estructura prevista es la siguiente; las carpetas de los servicios se crearán al comenzar su implementación.
 
 ```text
 Stock-Volcamelli/
@@ -126,12 +124,27 @@ Stock-Volcamelli/
 │   ├── ARCHITECTURE.md
 │   ├── adr/
 │   ├── contracts/
-│   │   ├── openapi.yaml
-│   │   └── mock/
-│   └── diagrams/
+│   │   └── openapi.yaml
+│   └── diagramas/
 ├── gateway/
-└── services/
+└── servicios/
     ├── servicio-usuarios/
     ├── servicio-sucursales/
     ├── servicio-inventario/
     └── servicio-notificaciones/
+```
+
+## Ejecución
+
+En esta primera entrega el sistema todavía no es ejecutable: la entrega comprende el diseño y el contrato de integración. La implementación de los servicios comienza en la Entrega 2.
+
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| [SPEC.md](SPEC.md) | Alcance, actores, reglas de negocio y criterios de aceptación |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura general, servicios, datos y comunicación |
+| [docs/diagramas/contexto.md](docs/diagramas/contexto.md) | Diagrama de contexto |
+| [docs/diagramas/contenedores.md](docs/diagramas/contenedores.md) | Diagrama de contenedores |
+| [docs/adr/](docs/adr/) | Decisiones de arquitectura (D1, D3, D5 y D8) |
+| [docs/contracts/README.md](docs/contracts/README.md) | Contrato de la capacidad publicada y cómo levantar su mock |

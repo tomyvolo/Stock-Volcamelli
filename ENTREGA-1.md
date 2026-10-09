@@ -164,7 +164,7 @@ El proyecto utilizará un único repositorio con los cuatro microservicios.
 ```text
 Stock-Volcamelli/
 ├── gateway/
-└── services/
+└── servicios/
     ├── servicio-usuarios/
     ├── servicio-sucursales/
     ├── servicio-inventario/
@@ -368,29 +368,22 @@ No se utilizará una base de datos compartida entre los servicios.
 
 La distribución inicial de datos será:
 
-| Servicio | Datos |
-|---|---|
-| Servicio de Usuarios | Usuarios y roles |
-| Servicio de Sucursales | Sucursales |
-| Servicio de Inventario | Productos, stock, movimientos y transferencias |
-| Servicio de Notificaciones | Notificaciones |
+| Servicio | Datos | Almacenamiento |
+|---|---|---|
+| Servicio de Usuarios | Usuarios y roles | PostgreSQL |
+| Servicio de Sucursales | Sucursales | PostgreSQL |
+| Servicio de Inventario | Productos, stock, movimientos y transferencias | PostgreSQL |
+| Servicio de Notificaciones | Notificaciones | MongoDB |
 
-La tecnología concreta de cada persistencia se definirá durante la implementación.
-
-Como decisión inicial, la arquitectura contempla la utilización de diferentes tipos de almacenamiento según las necesidades de cada servicio.
-
-En particular, la solución final deberá contar con al menos:
-
-- Una persistencia relacional.
-- Una persistencia no relacional.
-
-La elección concreta será documentada y justificada en una versión posterior de esta decisión.
+Cada servicio relacional utiliza su propia base y credenciales. De esta manera la solución cuenta con una persistencia relacional (PostgreSQL) y una no relacional (MongoDB).
 
 ## Motivo
 
 La separación de persistencias permite mantener la propiedad de los datos establecida en D1 y evita que un servicio dependa de la estructura interna de almacenamiento de otro.
 
-Esta es una versión inicial de D3 para la primera entrega; no se fija todavía una tecnología concreta que no haya sido decidida por el equipo.
+PostgreSQL permite resolver la transferencia de stock con una única transacción local y expresar reglas como el stock no negativo mediante restricciones. MongoDB se ajusta a las notificaciones, que son documentos independientes escritos a partir de eventos y consultados por destinatario.
+
+La justificación completa se encuentra en `docs/adr/ADR-003-persistencia-inicial.md`.
 
 ---
 

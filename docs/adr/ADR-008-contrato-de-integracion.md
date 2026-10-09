@@ -7,7 +7,7 @@ Aceptado para la Entrega 1.
 Otro grupo necesita integrar su flujo con el dominio de inventario de Stock Volcamelli. La capacidad publicada debe representar el servicio Inventory completo dentro de su responsabilidad de negocio: productos, stock por sucursal, movimientos y transferencias.
 
 ## Decisión
-Se publicará la API de Servicio de Inventario bajo la ruta versionada /api/v1. El contrato canónico está en ../contracts/openapi.yaml (OpenAPI 3.1), y el mock de Prism en ../contracts/mock/ usa esa especificación como fuente.
+Se publicará la API de Servicio de Inventario bajo la ruta versionada /api/v1. El contrato canónico está en ../contracts/openapi.yaml (OpenAPI 3.1); el mock se levanta con Prism en Docker a partir de esa misma especificación (ver ../contracts/README.md).
 
 La superficie pública de v1 incluye:
 

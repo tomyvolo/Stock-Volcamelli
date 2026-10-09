@@ -287,3 +287,42 @@ Para la primera entrega se documentará el diseño inicial del sistema, incluyen
 - Contrato inicial de integración.
 - Estructura inicial del repositorio.
 - Decisiones arquitectónicas iniciales mediante ADRs.
+
+---
+
+## 13. Criterios de aceptación
+
+### Transferencias
+
+**CA-01 — Transferencia válida**
+Dado que la sucursal de origen tiene 10 unidades de un producto y la de destino tiene 2, cuando un operador transfiere 4 unidades, entonces el origen queda con 6, el destino con 6, la transferencia queda registrada como completada y se registra un movimiento en cada sucursal.
+
+**CA-02 — Stock insuficiente**
+Dado que la sucursal de origen tiene 3 unidades de un producto, cuando se intenta transferir 5, entonces la transferencia se rechaza y el stock de ambas sucursales no cambia.
+
+**CA-03 — Misma sucursal**
+Cuando se intenta transferir un producto con la misma sucursal como origen y destino, entonces la transferencia se rechaza.
+
+**CA-04 — Sucursal inexistente**
+Cuando se intenta transferir hacia o desde una sucursal que no existe, entonces la transferencia se rechaza y el stock no cambia.
+
+**CA-05 — Reintento de una transferencia**
+Dada una transferencia ya registrada, cuando se reenvía la misma solicitud con la misma clave de idempotencia, entonces el stock no se modifica nuevamente y se devuelve el resultado de la transferencia original.
+
+### Movimientos de stock
+
+**CA-06 — Salida que dejaría stock negativo**
+Dado que una sucursal tiene 2 unidades de un producto, cuando se registra una salida de 3 unidades, entonces la operación se rechaza y el stock sigue en 2.
+
+### Notificaciones
+
+**CA-07 — Stock bajo**
+Dado que una sucursal tiene 6 unidades de un producto, cuando una operación deja el stock en 5, entonces se genera una notificación `LOW_STOCK` para esa sucursal y ese producto.
+
+**CA-08 — Sin stock**
+Dado que una sucursal tiene 2 unidades de un producto, cuando una operación deja el stock en 0, entonces se genera una notificación `OUT_OF_STOCK` para esa sucursal y ese producto.
+
+### Usuarios y permisos
+
+**CA-09 — Permisos del operador**
+Dado un usuario con rol `OPERATOR`, cuando intenta crear un usuario o una sucursal, entonces la operación se rechaza. Sí puede consultar stock y realizar transferencias.

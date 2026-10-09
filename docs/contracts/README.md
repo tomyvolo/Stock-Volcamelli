@@ -24,11 +24,9 @@ Las sucursales siguen siendo propiedad de Servicio de Sucursales. Servicio de In
 
 El mock de Prism se deriva de esta misma especificación, usa los ejemplos declarados y no necesita código de servicio ni datos reales.
 
-Requiere Node.js y npm:
+Requiere Docker. Desde la raíz del repositorio:
 
-    cd docs/contracts/mock
-    npm install
-    npm start
+    docker run --rm -p 4010:4010 -v "${PWD}/docs/contracts:/contrato" stoplight/prism:5 mock -h 0.0.0.0 /contrato/openapi.yaml
 
 El mock escucha en http://localhost:4010. Por ejemplo:
 

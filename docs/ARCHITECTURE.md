@@ -170,20 +170,18 @@ De esta manera, el sistema utiliza al menos dos patrones de arquitectura interna
 
 Cada microservicio es responsable de sus propios datos.
 
-| Microservicio | Datos de los que es propietario |
-|---|---|
-| Servicio de Usuarios | Usuarios y roles |
-| Servicio de Sucursales | Sucursales |
-| Servicio de Inventario | Productos, stock, movimientos y transferencias |
-| Servicio de Notificaciones | Notificaciones |
+| Microservicio | Datos de los que es propietario | Almacenamiento |
+|---|---|---|
+| Servicio de Usuarios | Usuarios y roles | PostgreSQL (base propia) |
+| Servicio de Sucursales | Sucursales | PostgreSQL (base propia) |
+| Servicio de Inventario | Productos, stock, movimientos y transferencias | PostgreSQL (base propia) |
+| Servicio de Notificaciones | Notificaciones | MongoDB |
 
-Ningún microservicio accederá directamente a la base de datos de otro microservicio.
+Ningún microservicio accederá directamente a la base de datos de otro microservicio. La justificación de cada almacenamiento está en [adr/ADR-003-persistencia-inicial.md](adr/ADR-003-persistencia-inicial.md).
 
 Cuando un servicio necesite información perteneciente a otro servicio, utilizará la comunicación definida entre ambos.
 
 ## 5. Comunicación entre servicios
-
-Los diagramas de contexto y contenedores están en diagrams/. Las decisiones correspondientes se registran en adr/ y el contrato publicado en contracts/.
 
 La arquitectura contempla comunicación tanto **síncrona como asíncrona**.
 
@@ -210,3 +208,20 @@ Message Broker
        |
        v
 Servicio de Notificaciones
+```
+
+El Servicio de Inventario publica el evento cuando el stock de un producto cambia de forma relevante y continúa su operación sin esperar. El Servicio de Notificaciones consume el evento y genera la notificación `LOW_STOCK` u `OUT_OF_STOCK` correspondiente.
+
+El detalle de esta decisión se encuentra en [adr/ADR-005-comunicacion-inicial.md](adr/ADR-005-comunicacion-inicial.md).
+
+## 6. Diagramas
+
+- [Diagrama de contexto](diagramas/contexto.md): actores que interactúan con el sistema.
+- [Diagrama de contenedores](diagramas/contenedores.md): componentes del sistema y comunicaciones entre ellos.
+
+## 7. Decisiones de arquitectura
+
+- [ADR-001 — Límites de servicios y propiedad de datos](adr/ADR-001-limites-de-servicios.md)
+- [ADR-003 — Persistencia inicial](adr/ADR-003-persistencia-inicial.md)
+- [ADR-005 — Comunicación inicial entre servicios](adr/ADR-005-comunicacion-inicial.md)
+- [ADR-008 — Contrato de integración del Servicio de Inventario](adr/ADR-008-contrato-de-integracion.md)
