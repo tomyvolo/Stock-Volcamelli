@@ -21,7 +21,7 @@ Cada MySQL corre en su propio contenedor. Así, si una base se cae o se llena, l
 ### Inventario
 Es donde más importa la consistencia. Una transferencia resta en origen y suma en destino en una sola transacción, y lee las dos filas con `SELECT ... FOR UPDATE` para que dos transferencias al mismo tiempo no dejen el stock mal. Además, la base hace cumplir dos reglas: la combinación producto y sucursal no se repite (`UNIQUE`) y el stock no puede ser negativo (`CHECK`, que MySQL respeta desde la 8.0.16).
 
-En esta misma base van dos tablas que necesitamos para los eventos (ADR de D5): la de eventos a publicar (outbox) y la de eventos ya procesados, para no aplicar dos veces la misma reversión.
+En esta misma base van tres tablas que necesitamos para la comunicación con Transferencias ([ADR-016](ADR-016-comunicacion-entre-servicios.md)): la de transferencias hechas o anuladas, la de eventos a publicar (outbox) y la de eventos ya procesados, para no aplicar dos veces la misma reversión.
 
 ### Transferencias
 Cada transferencia es un documento con lo que se pidió, su estado actual, la lista de estados por los que pasó, el id que le dio Rumbo y los eventos pendientes de publicar. Un cambio de estado y su evento se guardan en el mismo documento, y en MongoDB escribir un documento es atómico, así que no se puede guardar uno sin el otro.

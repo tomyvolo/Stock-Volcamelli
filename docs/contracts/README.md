@@ -1,42 +1,93 @@
-# Contrato del Servicio de Inventario
+# Contrato de Inventario
 
-La capacidad publicada para la integración abarca la API funcional de Servicio de Inventario: productos, stock por sucursal, movimientos y transferencias. La especificación OpenAPI 3.1 está en openapi.yaml; los cuatro ADR están en ../adr/.
+Le ofrecemos al otro grupo consultar nuestro catálogo de productos y el stock de cada sucursal. Son solo lecturas: no se puede crear ni modificar nada. El contrato completo está en [openapi.yaml](openapi.yaml) y las decisiones detrás están en [ADR-017](../adr/ADR-017-contrato-propio.md).
 
-## Operaciones de v1
+Versión vigente: 1.0.0
 
-| Área | Método y ruta | Uso |
-|---|---|---|
-| Productos | GET /api/v1/products | Listar el catálogo |
-| Productos | POST /api/v1/products | Crear un producto |
-| Productos | GET /api/v1/products/{productId} | Consultar un producto |
-| Productos | PATCH /api/v1/products/{productId} | Modificar nombre o descripción |
-| Stock | GET /api/v1/branches/{branchId}/stock | Consultar existencias de una sucursal |
-| Stock | GET /api/v1/branches/{branchId}/products/{productId}/stock | Consultar una existencia puntual |
-| Movimientos | GET /api/v1/branches/{branchId}/products/{productId}/movements | Consultar el historial de movimientos |
-| Movimientos | POST /api/v1/branches/{branchId}/products/{productId}/movements/adjustments | Registrar una entrada o salida |
-| Transferencias | GET /api/v1/transfers | Listar transferencias |
-| Transferencias | POST /api/v1/transfers | Transferir stock entre sucursales |
-| Transferencias | GET /api/v1/transfers/{transferId} | Consultar una transferencia |
+## Operaciones
 
-Las sucursales siguen siendo propiedad de Servicio de Sucursales. Servicio de Inventario solo recibe sus identificadores. Una transferencia válida descuenta en origen y acredita en destino como una operación atómica. El stock nunca puede ser negativo. Las operaciones POST para crear productos, registrar ajustes y transferir stock requieren Idempotency-Key. PATCH de producto asigna valores y puede repetirse con seguridad.
+| Método y ruta | Para qué |
+|---|---|
+| `POST /api/auth/login` | Obtener el token |
+| `GET /api/products?page=1&size=20` | Listar productos, de a una página |
+| `GET /api/products/{productId}` | Ver un producto |
+| `GET /api/branches/{branchId}/stock` | Ver el stock de todos los productos de una sucursal |
+| `GET /api/branches/{branchId}/products/{productId}/stock` | Ver el stock de un producto en una sucursal |
 
-## Ejecutar el mock
+Algunas aclaraciones:
+- Si una sucursal no tiene stock cargado, la consulta de su stock devuelve una lista vacía.
+- Si un producto existe pero no tiene stock en esa sucursal, la cantidad viene en 0.
+- El stock es el del momento de la consulta y puede cambiar enseguida.
 
-El mock de Prism se deriva de esta misma especificación, usa los ejemplos declarados y no necesita código de servicio ni datos reales.
+## Autenticación
 
-Requiere Docker. Desde la raíz del repositorio:
+Le creamos al grupo consumidor una cuenta con el rol `INTEGRACION`, que solo puede hacer estas consultas. El email y la contraseña los pasamos por privado, no están en el repositorio.
 
-    docker run --rm -p 4010:4010 -v "${PWD}/docs/contracts:/contrato" stoplight/prism:5 mock -h 0.0.0.0 /contrato/openapi.yaml
+1. Hacer login con esa cuenta y guardar el `token` de la respuesta.
+2. Mandarlo en todas las consultas en el header `Authorization: Bearer <token>`.
+3. El token dura 1 hora (`expiresIn` viene en segundos). Cuando vence, las consultas devuelven `401` y hay que volver a hacer login.
 
-El mock escucha en http://localhost:4010. Por ejemplo:
+## Errores
 
-    curl http://localhost:4010/api/v1/branches/3/products/15/stock
-    curl -H "Idempotency-Key: demo-ajuste-001" -H "Content-Type: application/json" -d "{\"direction\":\"INBOUND\",\"quantity\":10,\"reason\":\"Reposición\"}" http://localhost:4010/api/v1/branches/3/products/15/movements/adjustments
+Todos los errores tienen el mismo formato:
 
-Las operaciones de escritura del mock muestran las respuestas de ejemplo; no modifican inventario real ni conservan estado entre llamadas.
+```json
+{ "code": "PRODUCT_NOT_FOUND", "message": "No existe el producto 15." }
+```
 
-## Versionado y compatibilidad
+| HTTP | `code` | Qué pasó | Qué hacer |
+|---|---|---|---|
+| 400 | `INVALID_REQUEST` | Algún parámetro es inválido | Corregir el pedido |
+| 401 | `UNAUTHORIZED` | Falta el token, no es válido o venció | Volver a hacer login |
+| 401 | `INVALID_CREDENTIALS` | Email o contraseña incorrectos en el login | Revisar los datos de la cuenta |
+| 404 | `PRODUCT_NOT_FOUND` | El producto no existe | Verificar el id |
+| 500 | `INTERNAL_ERROR` | Error de nuestro lado | Probar de nuevo más tarde |
 
-La versión mayor está en la ruta /api/v1 y la versión de la especificación figura en info.version. Agregar operaciones o campos opcionales dentro de v1 puede ser compatible. Cambiar tipos, quitar campos obligatorios o cambiar las reglas de una operación requiere una nueva versión mayor y una nueva ruta. Los consumidores deben ignorar campos nuevos que no reconozcan.
+## Ejemplos
 
-Este mock es una herramienta de diseño, no un servicio de producción. Antes de una exposición real se deben acordar autenticación, autorización, límites de uso y disponibilidad con los consumidores. La eliminación de productos queda fuera de v1 hasta definir cómo afecta el historial de movimientos.
+Login:
+
+```bash
+curl -X POST http://localhost:4010/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "integracion@grupo-consumidor.com", "password": "una-clave-de-ejemplo"}'
+```
+
+Listar productos:
+
+```bash
+curl "http://localhost:4010/api/products?page=1&size=20" \
+  -H "Authorization: Bearer <token>"
+```
+
+Stock de un producto en una sucursal:
+
+```bash
+curl http://localhost:4010/api/branches/3/products/15/stock \
+  -H "Authorization: Bearer <token>"
+```
+
+Respuesta:
+
+```json
+{ "branchId": 3, "productId": 15, "productName": "Harina 000", "quantity": 42 }
+```
+
+## Probar con el mock
+
+Mientras Inventario no esté implementado, se puede probar contra un mock que se arma solo a partir de `openapi.yaml`. Hace falta Docker. Desde la raíz del repositorio:
+
+```bash
+docker run --rm -p 4010:4010 -v "${PWD}/docs/contracts:/contrato" stoplight/prism:5 mock -h 0.0.0.0 /contrato/openapi.yaml
+```
+
+El mock queda en `http://localhost:4010`:
+- Devuelve las respuestas de ejemplo del contrato. No tiene datos reales ni guarda nada.
+- Valida los pedidos: si falta un parámetro obligatorio o tiene un valor inválido, responde `400`.
+- Pide el header `Authorization`. Sin el header responde `401`, pero acepta cualquier token.
+
+Para ver un error en particular se usa el header `Prefer`, por ejemplo `Prefer: code=404`.
+
+## Cambios en el contrato
+
+No manejamos versiones. Solo hacemos cambios que no rompan lo que ya usa el otro grupo, como agregar operaciones o campos nuevos en las respuestas. No sacamos ni renombramos campos, ni cambiamos su tipo. Si alguna vez hiciera falta, lo acordamos antes con el grupo consumidor. Conviene que el consumidor ignore los campos que no conoce, así un campo nuevo no le rompe nada.

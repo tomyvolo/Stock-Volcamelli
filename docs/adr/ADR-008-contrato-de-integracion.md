@@ -1,42 +1,28 @@
-# ADR-008 — Contrato de integración del Servicio de Inventario
+# ADR-008 — Contrato propio (D8)
 
 ## Estado
-Aceptado para la Entrega 1.
+Reemplazado por [ADR-017](ADR-017-contrato-propio.md). Lo dejamos como registro de lo que decidimos en la Entrega 1.
 
 ## Contexto
-Otro grupo necesita integrar su flujo con el dominio de inventario de Stock Volcamelli. La capacidad publicada debe representar el servicio Inventory completo dentro de su responsabilidad de negocio: productos, stock por sucursal, movimientos y transferencias.
+Otro grupo va a usar una capacidad de nuestro sistema, y elegimos ofrecerle Inventario.
 
 ## Decisión
-Se publicará la API de Servicio de Inventario bajo la ruta versionada /api/v1. El contrato canónico está en ../contracts/openapi.yaml (OpenAPI 3.1); el mock se levanta con Prism en Docker a partir de esa misma especificación (ver ../contracts/README.md).
-
-La superficie pública de v1 incluye:
+Publicamos toda la API de Inventario, descripta en [openapi.yaml](../contracts/openapi.yaml), con un mock en Prism para que el otro grupo pueda probar antes de que esté implementada.
 
 | Área | Operaciones |
 |---|---|
-| Productos | Listar, consultar por identificador, crear y modificar nombre o descripción |
-| Stock | Consultar stock de una sucursal o de un producto en una sucursal |
-| Movimientos | Registrar entradas y salidas y consultar los movimientos de un producto en una sucursal |
-| Transferencias | Registrar una transferencia entre sucursales y consultar su resultado |
+| Productos | Listar, ver uno, crear y modificar nombre o descripción |
+| Stock | Ver el stock de una sucursal o de un producto en una sucursal |
+| Movimientos | Registrar entradas y salidas, y ver los movimientos de un producto en una sucursal |
+| Transferencias | Transferir stock entre sucursales y ver el resultado |
 
-Las transferencias se completan dentro de Servicio de Inventario: descuentan stock en origen, acreditan stock en destino y generan sus movimientos. No se permite stock negativo. Los IDs de sucursal son referencias administradas por Servicio de Sucursales; Servicio de Inventario no expone la administración de sucursales.
+Los POST (crear producto, registrar movimiento, transferir) llevaban el header `Idempotency-Key` para que un reintento no repitiera la operación. El mock no tenía autenticación: la íbamos a acordar con el otro grupo antes de la implementación real.
 
-Las operaciones POST para crear productos, registrar movimientos o transferir stock requieren la cabecera Idempotency-Key para que un reintento no duplique el efecto. La modificación de campos de producto usa PATCH con asignación de valores y puede repetirse de forma segura. Las operaciones de lectura no requieren idempotencia. El mock académico es público y usa datos ficticios; antes de exponer una implementación real se deberá acordar autenticación, autorización y límites de uso con el grupo consumidor.
-
-## Versionado y compatibilidad
-La versión mayor figura en la ruta (/api/v1) y la versión de la especificación en info.version. Agregar operaciones o campos opcionales sin cambiar el significado existente puede ser compatible. Quitar campos obligatorios, cambiar tipos o alterar reglas requiere una versión mayor nueva y una ruta nueva.
-
-## Justificación
-Servicio de Inventario es la capacidad de negocio que el equipo decidió ofrecer. Publicar su superficie funcional completa evita que el consumidor dependa de una única consulta si necesita administrar productos, registrar movimientos o transferir stock.
-
-## Alternativas consideradas
-- Publicar solo la consulta de stock: descartada porque deja fuera las operaciones centrales de Servicio de Inventario.
-- Publicar también la gestión de sucursales: descartada porque esos datos pertenecen a Servicio de Sucursales.
-- Publicar interfaces directas a persistencia: descartada porque expondría detalles internos y rompería la propiedad de los datos.
+## Alternativas que descartamos
+- **Publicar solo la consulta de stock.** Nos parecía que dejaba afuera lo principal de Inventario.
+- **Publicar también la gestión de sucursales.** Las sucursales son de otro servicio.
 
 ## Consecuencias
-- El grupo consumidor puede integrar el ciclo de inventario completo mediante un contrato estable.
-- Las transferencias deben ser atómicas dentro de Servicio de Inventario y validar disponibilidad antes de confirmar.
-- Las operaciones POST idempotentes deben conservar el resultado asociado a cada clave dentro del período de retención que defina la implementación.
-- Las notificaciones de stock continúan siendo responsabilidad de Servicio de Notificaciones y pueden generarse de manera asíncrona.
-- El contrato no promete autenticación para el mock de aula. Antes de producción deben acordarse seguridad, límites de uso, disponibilidad y política de compatibilidad.
-- La eliminación de productos no forma parte de esta versión porque hay que definir su relación con el historial de movimientos.
+- El otro grupo podía crear productos y mover stock en nuestro sistema.
+- Las transferencias tenían que ser atómicas dentro de Inventario.
+- No se podían borrar productos, porque no habíamos definido qué pasaba con sus movimientos.

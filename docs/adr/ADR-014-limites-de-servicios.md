@@ -32,7 +32,7 @@ Las relaciones entre servicios son:
 - Si Rumbo rechaza el traslado, Transferencias publica el evento `TransferenciaRevertida` e Inventario devuelve el stock al origen.
 - Inventario consulta a Sucursales que la sucursal exista cuando un ADMIN hace un ajuste.
 
-Cómo se comunican (sincrónico, eventos, reintentos) lo explicamos en el ADR de D5.
+Cómo se comunican (sincrónico, eventos, timeouts) lo explicamos en [ADR-016](ADR-016-comunicacion-entre-servicios.md).
 
 ## Alternativas que descartamos
 - **Dejar las transferencias dentro de Inventario, como en ADR-001.** Es lo que había y lo que queremos evitar: el servicio publicado dependería de Rumbo.
