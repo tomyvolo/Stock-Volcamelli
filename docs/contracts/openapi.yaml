@@ -1,105 +1,108 @@
 openapi: 3.1.0
 info:
-  title: Stock Volcamelli - API del Servicio de Inventario
+  title: Stock Volcamelli - Inventario
   version: 1.0.0
   description: >-
-    API pública del Servicio de Inventario: productos, stock, movimientos y transferencias.
-    El mock de la Entrega 1 usa ejemplos ficticios y no contiene datos sensibles.
+    Consultas del catálogo de productos y del stock por sucursal de Stock Volcamelli.
+    Todas las operaciones son de lectura y requieren un token que se obtiene con el login.
 servers:
   - url: http://localhost:4010
     description: Mock local de Prism
+security:
+  - bearerAuth: []
 tags:
-  - name: Products
-    description: Consulta y mantenimiento básico de productos
+  - name: Auth
+    description: Obtener el token
+  - name: Productos
+    description: Catálogo de productos
   - name: Stock
-    description: Consulta de existencias por sucursal
-  - name: Movements
-    description: Registro y consulta de movimientos de inventario
-  - name: Transfers
-    description: Transferencias de productos entre sucursales
+    description: Stock por sucursal
 paths:
-  /api/v1/products:
-    get:
-      tags: [Products]
-      operationId: listProducts
-      summary: Listar productos
-      security: []
-      responses:
-        '200':
-          description: Catálogo de productos.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Product'
-              examples:
-                catalog:
-                  value:
-                    items:
-                      - id: 15
-                        name: Harina 000
-                        description: Bolsa de 1 kg
-                      - id: 21
-                        name: Aceite de girasol
-                        description: Botella de 900 ml
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+  /api/auth/login:
     post:
-      tags: [Products]
-      operationId: createProduct
-      summary: Crear un producto
+      tags: [Auth]
+      operationId: login
+      summary: Obtener un token
+      description: >-
+        Se hace con la cuenta que le damos al grupo consumidor. El token dura 1 hora;
+        cuando vence, hay que volver a hacer login.
       security: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProductInput'
+              $ref: '#/components/schemas/LoginInput'
             example:
-              name: Harina 000
-              description: Bolsa de 1 kg
+              email: integracion@grupo-consumidor.com
+              password: una-clave-de-ejemplo
       responses:
-        '201':
-          description: Producto creado.
+        '200':
+          description: Login correcto.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Product'
+                $ref: '#/components/schemas/Token'
               example:
-                id: 15
-                name: Harina 000
-                description: Bolsa de 1 kg
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ejemplo.firma
+                expiresIn: 3600
         '400':
           $ref: '#/components/responses/InvalidRequest'
-        '409':
-          description: Ya existe un producto con esos datos únicos.
+        '401':
+          description: Email o contraseña incorrectos.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
               example:
-                code: PRODUCT_ALREADY_EXISTS
-                message: Ya existe un producto con ese nombre.
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/products/{productId}:
+                code: INVALID_CREDENTIALS
+                message: El email o la contraseña son incorrectos.
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/products:
+    get:
+      tags: [Productos]
+      operationId: listProducts
+      summary: Listar productos
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Una página del catálogo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+              example:
+                items:
+                  - id: 15
+                    name: Harina 000
+                    description: Bolsa de 1 kg
+                    supplier: Molinos del Centro
+                  - id: 21
+                    name: Aceite de girasol
+                    description: Botella de 900 ml
+                    supplier: null
+                page: 1
+                size: 20
+                total: 2
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/products/{productId}:
     parameters:
       - $ref: '#/components/parameters/ProductId'
     get:
-      tags: [Products]
+      tags: [Productos]
       operationId: getProduct
-      summary: Consultar un producto
-      security: []
+      summary: Ver un producto
       responses:
         '200':
-          description: Producto encontrado.
+          description: El producto.
           content:
             application/json:
               schema:
@@ -108,62 +111,28 @@ paths:
                 id: 15
                 name: Harina 000
                 description: Bolsa de 1 kg
+                supplier: Molinos del Centro
         '400':
           $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/ProductNotFound'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-    patch:
-      tags: [Products]
-      operationId: updateProduct
-      summary: Modificar el nombre o la descripción de un producto
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ProductUpdate'
-            example:
-              description: Bolsa familiar de 1 kg
-      responses:
-        '200':
-          description: Producto actualizado.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Product'
-              example:
-                id: 15
-                name: Harina 000
-                description: Bolsa familiar de 1 kg
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '404':
-          $ref: '#/components/responses/ProductNotFound'
-        '409':
-          description: El nombre solicitado ya está en uso.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                code: PRODUCT_ALREADY_EXISTS
-                message: Ya existe un producto con ese nombre.
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/branches/{branchId}/stock:
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/branches/{branchId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
     get:
       tags: [Stock]
       operationId: listBranchStock
-      summary: Consultar el stock de todos los productos de una sucursal
-      security: []
+      summary: Ver el stock de una sucursal
+      description: >-
+        Devuelve todos los productos que tienen stock cargado en la sucursal. Si la sucursal
+        no tiene ninguno, la lista viene vacía.
       responses:
         '200':
-          description: Existencias registradas en la sucursal.
+          description: El stock de la sucursal.
           content:
             application/json:
               schema:
@@ -175,290 +144,64 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/StockAvailability'
+                      $ref: '#/components/schemas/Stock'
               example:
                 branchId: 3
                 items:
                   - branchId: 3
                     productId: 15
-                    availableQuantity: 42
-                    observedAt: '2026-10-07T12:00:00Z'
+                    productName: Harina 000
+                    quantity: 42
                   - branchId: 3
                     productId: 21
-                    availableQuantity: 8
-                    observedAt: '2026-10-07T12:00:00Z'
+                    productName: Aceite de girasol
+                    quantity: 8
         '400':
           $ref: '#/components/responses/InvalidRequest'
-        '404':
-          $ref: '#/components/responses/BranchNotFound'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/branches/{branchId}/products/{productId}/stock:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/branches/{branchId}/products/{productId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
       - $ref: '#/components/parameters/ProductId'
     get:
       tags: [Stock]
       operationId: getBranchProductStock
-      summary: Consultar stock de un producto en una sucursal
-      security: []
+      summary: Ver el stock de un producto en una sucursal
+      description: Si el producto existe pero no tiene stock cargado en esa sucursal, devuelve cantidad 0.
       responses:
         '200':
-          description: Stock consultado correctamente.
+          description: El stock del producto en la sucursal.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StockAvailability'
+                $ref: '#/components/schemas/Stock'
               example:
                 branchId: 3
                 productId: 15
-                availableQuantity: 42
-                observedAt: '2026-10-07T12:00:00Z'
+                productName: Harina 000
+                quantity: 42
         '400':
           $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/StockNotFound'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/branches/{branchId}/products/{productId}/movements:
-    parameters:
-      - $ref: '#/components/parameters/BranchId'
-      - $ref: '#/components/parameters/ProductId'
-    get:
-      tags: [Movements]
-      operationId: listProductMovements
-      summary: Consultar movimientos de un producto en una sucursal
-      security: []
-      responses:
-        '200':
-          description: Historial de movimientos.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/StockMovement'
-              example:
-                items:
-                  - id: 501
-                    branchId: 3
-                    productId: 15
-                    direction: INBOUND
-                    quantity: 10
-                    reason: Reposición
-                    resultingQuantity: 42
-                    createdAt: '2026-10-07T11:45:00Z'
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '404':
-          $ref: '#/components/responses/StockNotFound'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/branches/{branchId}/products/{productId}/movements/adjustments:
-    parameters:
-      - $ref: '#/components/parameters/BranchId'
-      - $ref: '#/components/parameters/ProductId'
-    post:
-      tags: [Movements]
-      operationId: registerStockMovement
-      summary: Registrar una entrada o salida de stock
-      description: Una salida no puede dejar el stock en un valor negativo.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MovementInput'
-            examples:
-              inbound:
-                value:
-                  direction: INBOUND
-                  quantity: 10
-                  reason: Reposición
-              outbound:
-                value:
-                  direction: OUTBOUND
-                  quantity: 2
-                  reason: Ajuste por venta
-      responses:
-        '201':
-          description: Movimiento registrado y stock actualizado.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StockMovement'
-              example:
-                id: 501
-                branchId: 3
-                productId: 15
-                direction: INBOUND
-                quantity: 10
-                reason: Reposición
-                resultingQuantity: 42
-                createdAt: '2026-10-07T11:45:00Z'
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '404':
-          $ref: '#/components/responses/StockNotFound'
-        '409':
-          description: La salida excede el stock disponible.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                code: INSUFFICIENT_STOCK
-                message: La operación no puede dejar el stock por debajo de cero.
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/transfers:
-    get:
-      tags: [Transfers]
-      operationId: listTransfers
-      summary: Listar transferencias registradas
-      security: []
-      responses:
-        '200':
-          description: Transferencias registradas.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Transfer'
-              example:
-                items:
-                  - id: 7001
-                    productId: 15
-                    sourceBranchId: 3
-                    destinationBranchId: 7
-                    quantity: 5
-                    status: COMPLETED
-                    createdAt: '2026-10-07T12:05:00Z'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-    post:
-      tags: [Transfers]
-      operationId: createTransfer
-      summary: Transferir stock entre sucursales
-      description: 'La operación es atómica: descuenta en origen y acredita en destino, sin permitir stock negativo.'
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TransferInput'
-            example:
-              productId: 15
-              sourceBranchId: 3
-              destinationBranchId: 7
-              quantity: 5
-      responses:
-        '201':
-          description: Transferencia completada; se registraron movimientos en ambas sucursales.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transfer'
-              example:
-                id: 7001
-                productId: 15
-                sourceBranchId: 3
-                destinationBranchId: 7
-                quantity: 5
-                status: COMPLETED
-                createdAt: '2026-10-07T12:05:00Z'
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '404':
-          description: No se encontró el producto, una sucursal o el stock de origen.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                code: INVENTORY_REFERENCE_NOT_FOUND
-                message: No se encontró el producto o una sucursal indicada.
-        '409':
-          description: No se puede completar la transferencia.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              examples:
-                insufficientStock:
-                  value:
-                    code: INSUFFICIENT_STOCK
-                    message: La sucursal de origen no tiene stock suficiente.
-                sameBranch:
-                  value:
-                    code: SAME_SOURCE_AND_DESTINATION
-                    message: La sucursal de origen y destino deben ser distintas.
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/transfers/{transferId}:
-    parameters:
-      - name: transferId
-        in: path
-        required: true
-        schema:
-          type: integer
-          minimum: 1
-        example: 7001
-    get:
-      tags: [Transfers]
-      operationId: getTransfer
-      summary: Consultar una transferencia
-      security: []
-      responses:
-        '200':
-          description: Transferencia encontrada.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transfer'
-              example:
-                id: 7001
-                productId: 15
-                sourceBranchId: 3
-                destinationBranchId: 7
-                quantity: 5
-                status: COMPLETED
-                createdAt: '2026-10-07T12:05:00Z'
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '404':
-          description: Transferencia inexistente.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                code: TRANSFER_NOT_FOUND
-                message: No se encontró la transferencia indicada.
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/ProductNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   parameters:
     BranchId:
       name: branchId
       in: path
       required: true
-      description: Identificador numérico positivo de la sucursal.
       schema:
         type: integer
         minimum: 1
@@ -467,224 +210,132 @@ components:
       name: productId
       in: path
       required: true
-      description: Identificador numérico positivo del producto.
       schema:
         type: integer
         minimum: 1
       example: 15
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: Clave única para que un reintento de escritura no aplique dos veces la operación.
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Número de página, empieza en 1.
       schema:
-        type: string
-        minLength: 8
-        maxLength: 128
-      example: 6a983fbc-movimiento-501
+        type: integer
+        minimum: 1
+        default: 1
+    Size:
+      name: size
+      in: query
+      required: false
+      description: Cantidad de productos por página.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
   responses:
     InvalidRequest:
-      description: Datos de entrada inválidos.
+      description: Algún parámetro es inválido.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
           example:
             code: INVALID_REQUEST
-            message: Revisá los identificadores y campos requeridos.
+            message: El parámetro page tiene que ser un número mayor a 0.
+    Unauthorized:
+      description: Falta el token, no es válido o venció.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: UNAUTHORIZED
+            message: Falta el token o venció. Volvé a hacer login.
     ProductNotFound:
-      description: Producto inexistente.
+      description: El producto no existe.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
           example:
             code: PRODUCT_NOT_FOUND
-            message: No se encontró el producto indicado.
-    BranchNotFound:
-      description: Sucursal inexistente.
+            message: No existe el producto 15.
+    InternalError:
+      description: Error de nuestro lado.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
           example:
-            code: BRANCH_NOT_FOUND
-            message: No se encontró la sucursal indicada.
-    StockNotFound:
-      description: No existe el producto, la sucursal o su registro de stock.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: STOCK_NOT_FOUND
-            message: No se encontró stock para el producto y la sucursal indicados.
-    ServiceUnavailable:
-      description: El servicio no puede atender la solicitud temporalmente.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: SERVICE_UNAVAILABLE
-            message: El servicio de inventario no está disponible temporalmente.
+            code: INTERNAL_ERROR
+            message: Ocurrió un error inesperado. Probá de nuevo en unos minutos.
   schemas:
-    ProductInput:
+    LoginInput:
       type: object
       additionalProperties: false
-      required: [name]
+      required: [email, password]
       properties:
-        name:
+        email:
+          type: string
+          format: email
+        password:
           type: string
           minLength: 1
-          maxLength: 120
-          example: Harina 000
-        description:
-          type: string
-          maxLength: 500
-          example: Bolsa de 1 kg
-    ProductUpdate:
+    Token:
       type: object
-      additionalProperties: false
-      minProperties: 1
+      required: [token, expiresIn]
       properties:
-        name:
+        token:
           type: string
-          minLength: 1
-          maxLength: 120
-        description:
-          type: string
-          maxLength: 500
+        expiresIn:
+          type: integer
+          description: Segundos hasta que vence el token.
     Product:
       type: object
-      additionalProperties: false
       required: [id, name]
       properties:
         id:
           type: integer
           minimum: 1
-          example: 15
         name:
           type: string
-          minLength: 1
-          maxLength: 120
-          example: Harina 000
         description:
           type: string
-          maxLength: 500
-          example: Bolsa de 1 kg
-    StockAvailability:
+        supplier:
+          type: [string, 'null']
+          description: A quién le compramos el producto. Puede venir en null.
+    ProductPage:
       type: object
-      additionalProperties: false
-      required: [branchId, productId, availableQuantity, observedAt]
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        page:
+          type: integer
+        size:
+          type: integer
+        total:
+          type: integer
+          description: Cantidad total de productos.
+    Stock:
+      type: object
+      required: [branchId, productId, productName, quantity]
       properties:
         branchId:
           type: integer
-          minimum: 1
-          example: 3
         productId:
           type: integer
-          minimum: 1
-          example: 15
-        availableQuantity:
+        productName:
+          type: string
+        quantity:
           type: integer
           minimum: 0
-          description: Unidades disponibles para operar; nunca es negativa.
-          example: 42
-        observedAt:
-          type: string
-          format: date-time
-          description: Instante UTC en que se obtuvo la consulta.
-          example: '2026-10-07T12:00:00Z'
-    MovementInput:
-      type: object
-      additionalProperties: false
-      required: [direction, quantity, reason]
-      properties:
-        direction:
-          type: string
-          enum: [INBOUND, OUTBOUND]
-        quantity:
-          type: integer
-          minimum: 1
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 250
-    StockMovement:
-      type: object
-      additionalProperties: false
-      required: [id, branchId, productId, direction, quantity, reason, resultingQuantity, createdAt]
-      properties:
-        id:
-          type: integer
-          minimum: 1
-        branchId:
-          type: integer
-          minimum: 1
-        productId:
-          type: integer
-          minimum: 1
-        direction:
-          type: string
-          enum: [INBOUND, OUTBOUND]
-        quantity:
-          type: integer
-          minimum: 1
-        reason:
-          type: string
-        resultingQuantity:
-          type: integer
-          minimum: 0
-        createdAt:
-          type: string
-          format: date-time
-    TransferInput:
-      type: object
-      additionalProperties: false
-      required: [productId, sourceBranchId, destinationBranchId, quantity]
-      properties:
-        productId:
-          type: integer
-          minimum: 1
-        sourceBranchId:
-          type: integer
-          minimum: 1
-        destinationBranchId:
-          type: integer
-          minimum: 1
-        quantity:
-          type: integer
-          minimum: 1
-    Transfer:
-      type: object
-      additionalProperties: false
-      required: [id, productId, sourceBranchId, destinationBranchId, quantity, status, createdAt]
-      properties:
-        id:
-          type: integer
-          minimum: 1
-        productId:
-          type: integer
-          minimum: 1
-        sourceBranchId:
-          type: integer
-          minimum: 1
-        destinationBranchId:
-          type: integer
-          minimum: 1
-        quantity:
-          type: integer
-          minimum: 1
-        status:
-          type: string
-          enum: [COMPLETED]
-        createdAt:
-          type: string
-          format: date-time
+          description: Unidades en la sucursal al momento de la consulta. Nunca es negativa.
     ApiError:
       type: object
-      additionalProperties: false
       required: [code, message]
       properties:
         code:
