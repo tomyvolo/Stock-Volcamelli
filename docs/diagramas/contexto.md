@@ -1,44 +1,22 @@
 # Diagrama de Contexto
 
-El siguiente diagrama representa el sistema Stock Volcamelli y los actores que interactúan con él.
+Diseño planificado para Stock Volcamelli. El grupo consumidor usa nuestro catálogo y stock; Rumbo es el proveedor de traslados. Su contrato lo entrega el otro grupo.
 
 ```mermaid
 flowchart LR
-    A["Administrador"]
-    O["Operador"]
+    A["Administrador<br/>ADMIN"]
+    O["Operador<br/>OPERATOR"]
+    C["Grupo consumidor<br/>INTEGRACION"]
+    SV["Stock Volcamelli<br/>Inventario multisucursal"]
+    R["Rumbo<br/>Proveedor externo de traslados"]
 
-    SV["Stock Volcamelli<br/><br/>Sistema de gestión de<br/>inventario multisucursal"]
-
-    A -->|"Gestiona usuarios,<br/>sucursales y productos"| SV
-    A -->|"Consulta inventario"| SV
-
-    O -->|"Consulta inventario<br/>y productos"| SV
-    O -->|"Realiza transferencias"| SV
-    O -->|"Consulta notificaciones"| SV
+    A -->|"Administra, ajusta y transfiere"| SV
+    O -->|"Consulta y crea transferencias"| SV
+    C -->|"Login, catálogo y stock disponible"| SV
+    SV -->|"Transferencias solicita traslado<br/>y reconcilia el resultado"| R
+    R -->|"Aceptación o rechazo<br/>según contrato pendiente"| SV
 ```
 
-## Actores
+`ADMIN` administra usuarios, sucursales, productos y ajustes, además de operar. `OPERATOR` consulta inventario y crea transferencias. `INTEGRACION` solo lee las consultas del contrato.
 
-### Administrador
-
-El administrador puede:
-
-- Gestionar usuarios.
-- Gestionar sucursales.
-- Gestionar productos.
-- Consultar el inventario.
-
-### Operador
-
-El operador puede:
-
-- Consultar productos.
-- Consultar el inventario.
-- Realizar transferencias de productos entre sucursales.
-- Consultar notificaciones.
-
-## Sistema
-
-**Stock Volcamelli** es un sistema distribuido orientado a la gestión de inventario de empresas con múltiples sucursales.
-
-El sistema permite administrar productos, consultar stock por sucursal, realizar transferencias entre establecimientos y gestionar notificaciones relacionadas con los niveles de stock.
+El disponible es total menos reservado. La aceptación de Rumbo habilita la confirmación contable por Inventario; no seguimos el viaje físico. Las llamadas al proveedor salen de Transferencias. La interfaz y el consumidor entran por el API Gateway; los detalles internos están en el [diagrama de contenedores](contenedores.md).

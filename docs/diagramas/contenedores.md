@@ -1,99 +1,85 @@
 # Diagrama de Contenedores
 
-El siguiente diagrama muestra los principales componentes que forman parte de Stock Volcamelli y las relaciones entre ellos.
+Diseño planificado. La vista general agrupa las dos instancias de Inventario; la segunda vista muestra su distribución detrás de NGINX. Ambas instancias y sus trabajadores pertenecen al mismo servicio.
+
+```mermaid
+flowchart TB
+    U["Usuario<br/>ADMIN / OPERATOR"]
+    C["Grupo consumidor<br/>INTEGRACION"]
+    F["Frontend React"]
+    G["API Gateway Go / Gin<br/>JWT, permisos y control de tráfico"]
+    US["Usuarios<br/>Capas"]
+    BS["Sucursales<br/>Capas"]
+    TS["Transferencias<br/>Hexagonal"]
+    LB["NGINX interno"]
+    I["Inventario<br/>Capas - dos instancias"]
+    DU[("MySQL Usuarios")]
+    DB[("MySQL Sucursales")]
+    DT[("MongoDB Transferencias")]
+    DI[("MySQL Inventario")]
+    Q["RabbitMQ<br/>Reintentos y DLQ"]
+    S[("Solr")]
+    M[("Memcached")]
+    R["Rumbo<br/>Proveedor externo"]
+
+    U --> F
+    F --> G
+    C -->|"Login y consultas"| G
+    G --> US
+    G --> BS
+    G --> TS
+    G -->|"Inventario"| LB
+    US --> DU
+    BS --> DB
+    TS --> DT
+    TS -->|"Sucursales por HTTP"| BS
+    TS -->|"Reserva y consulta por HTTP"| LB
+    LB --> I
+    I -->|"Valida ajustes por HTTP"| BS
+    I --> DI
+    I -->|"Búsqueda e indexación"| S
+    I -->|"Fichas e invalidación"| M
+    TS <-->|"Hechos del proceso"| Q
+    I <-->|"Reserva y cambios de stock"| Q
+    TS -->|"Solicitud y reconciliación"| R
+```
+
+## Dos instancias de Inventario
 
 ```mermaid
 flowchart LR
-    U["Usuario"]
-
-    F["Interfaz Web"]
-
-    G["Puerta de Enlace<br/>API"]
-
-    US["Servicio de Usuarios<br/><br/>Usuarios y roles"]
-    BS["Servicio de Sucursales<br/><br/>Sucursales"]
-    IS["Servicio de Inventario<br/><br/>Productos<br/>Stock<br/>Movimientos<br/>Transferencias"]
-    NS["Servicio de Notificaciones<br/><br/>Notificaciones"]
-
-    MB["Gestor de Mensajes<br/><br/>Comunicación asíncrona"]
-
-    U -->|"Utiliza"| F
-    F -->|"Solicitudes"| G
-
-    G -->|"Gestiona usuarios"| US
-    G -->|"Gestiona sucursales"| BS
-    G -->|"Gestiona inventario"| IS
-    G -->|"Consulta notificaciones"| NS
-
-    IS -->|"Consulta / valida<br/>sucursales"| BS
-
-    IS -->|"Publica eventos<br/>de cambio de stock"| MB
-
-    MB -->|"Entrega eventos"| NS
+    G["API Gateway"] --> N["NGINX interno<br/>Round-robin"]
+    T["Transferencias"] -->|"HTTP interno"| N
+    N --> A["Inventario A"]
+    N --> B["Inventario B"]
+    A --> D[("MySQL propio de Inventario")]
+    B --> D
 ```
 
-## Componentes
+Las llamadas de Transferencias llegan al balanceador interno sin volver al gateway. NGINX detecta fallas a partir del tráfico y excluye temporalmente la instancia; los healthchecks de Docker no la retiran automáticamente. Las dos instancias usan también el mismo Solr y Memcached del servicio, y compiten dentro de las colas que les corresponden.
 
-### Interfaz Web
+## Propiedad y acceso
 
-Proporciona la interfaz mediante la cual los usuarios interactúan con Stock Volcamelli.
+| Servicio | Datos propios |
+|---|---|
+| Usuarios | Usuarios, credenciales y roles |
+| Sucursales | Sucursales y direcciones |
+| Inventario | Productos, existencias totales/reservadas, reservas, movimientos, idempotencia y outbox |
+| Transferencias | Proceso, estados, historial, decisión, id de Rumbo y outbox |
 
-### Puerta de Enlace API
+Cada servicio accede solo a su base. Inventario es el único que modifica cantidades. Transferencias no copia el stock; los registros idempotentes de Inventario no duplican el proceso de Transferencias. Solr y Memcached son copias reconstruibles.
 
-Es el punto de entrada para las solicitudes provenientes de la interfaz web.
+El indexador y el trabajador de invalidación son parte de Inventario, no otro microservicio de negocio. Consumen sus eventos desde RabbitMQ, leen solo su MySQL, actualizan Solr y borran las fichas afectadas de Memcached.
 
-Se encarga de dirigir cada solicitud hacia el servicio correspondiente.
+## Caminos de comunicación
 
-### Servicio de Usuarios
+- Frontend y consumidor → gateway. Roles vigentes: `ADMIN`, `OPERATOR`, `INTEGRACION`; este último solo lee el contrato.
+- Gateway → NGINX → Inventario A/B. Las restantes rutas van al servicio responsable.
+- Transferencias → Sucursales/Rumbo y Transferencias → NGINX → Inventario. Las llamadas internas y externas salen del servicio responsable.
+- Transferencias → RabbitMQ → Inventario: `TrasladoAceptado`, `TrasladoRechazado` o `SolicitudVencida` para confirmar/liberar.
+- Inventario → RabbitMQ → Transferencias: `ReservaConfirmada` o `ReservaLiberada` para completar el estado.
+- Inventario → RabbitMQ → sus trabajadores: cambios de producto/disponible para Solr e invalidación de fichas.
 
-Responsable de la gestión de:
+Las flechas dobles con RabbitMQ representan publicación y consumo mediante colas separadas. Los nombres de eventos son nuestros: el contrato de Rumbo lo entrega el otro grupo y sigue pendiente.
 
-- Usuarios.
-- Roles.
-
-Los roles definidos son:
-
-- `ADMIN`
-- `OPERATOR`
-
-### Servicio de Sucursales
-
-Responsable de la gestión de las sucursales de la empresa.
-
-### Servicio de Inventario
-
-Es el servicio principal del dominio de inventario.
-
-Responsabilidades:
-
-- Gestionar productos.
-- Gestionar stock por sucursal.
-- Registrar movimientos de inventario.
-- Realizar transferencias entre sucursales.
-- Validar disponibilidad de stock.
-- Mantener las reglas de consistencia del inventario.
-- Generar eventos relacionados con cambios relevantes del stock.
-
-El Servicio de Inventario constituye la capacidad publicada por el grupo para la integración con otro grupo.
-
-### Servicio de Notificaciones
-
-Responsable de gestionar las notificaciones generadas a partir de eventos relevantes del sistema.
-
-Tipos principales:
-
-- `LOW_STOCK`
-- `OUT_OF_STOCK`
-
-### Gestor de Mensajes
-
-Permite realizar la comunicación asíncrona entre el Servicio de Inventario y el Servicio de Notificaciones.
-
-El Servicio de Inventario publica eventos de cambio de stock y el Servicio de Notificaciones los consume.
-
-## Comunicación
-
-El sistema contempla dos tipos principales de comunicación:
-
-- **Comunicación síncrona:** el Servicio de Inventario puede comunicarse con el Servicio de Sucursales para validar información de las sucursales.
-- **Comunicación asíncrona:** el Servicio de Inventario publica eventos mediante el Gestor de Mensajes, que posteriormente son consumidos por el Servicio de Notificaciones.
+La [arquitectura](../ARCHITECTURE.md) precisa tiempos, reintentos, frescura, evidencia y limitaciones.

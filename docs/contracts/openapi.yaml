@@ -4,7 +4,11 @@ info:
   version: 1.0.0
   description: >-
     Consultas del catálogo de productos y del stock por sucursal de Stock Volcamelli.
-    Todas las operaciones son de lectura y requieren un token que se obtiene con el login.
+    Las consultas son de lectura y requieren un token obtenido con el login.
+    Los roles ADMIN, OPERATOR e INTEGRACION pueden consultar; INTEGRACION no puede escribir.
+    quantity siempre representa stock disponible: cantidad total menos cantidad reservada.
+    Las reservas no acreditan stock en destino hasta su confirmación tras la aceptación de Rumbo.
+    Diseño pendiente de implementación; Prism devuelve ejemplos y no ejecuta estas reglas.
 servers:
   - url: http://localhost:4010
     description: Mock local de Prism
@@ -57,6 +61,10 @@ paths:
               example:
                 code: INVALID_CREDENTIALS
                 message: El email o la contraseña son incorrectos.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/products:
@@ -91,6 +99,12 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/products/{productId}:
@@ -100,6 +114,9 @@ paths:
       tags: [Productos]
       operationId: getProduct
       summary: Ver un producto
+      description: >-
+        Ficha sin cantidades de stock. Puede servirse desde Memcached con un desfase máximo
+        de 60 segundos; la autenticación y autorización se verifican antes de usar la caché.
       responses:
         '200':
           description: El producto.
@@ -118,6 +135,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/ProductNotFound'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/branches/{branchId}/stock:
@@ -128,8 +151,10 @@ paths:
       operationId: listBranchStock
       summary: Ver el stock de una sucursal
       description: >-
-        Devuelve todos los productos que tienen stock cargado en la sucursal. Si la sucursal
-        no tiene ninguno, la lista viene vacía.
+        Devuelve el stock disponible de todos los productos con un registro de existencias
+        en el id de sucursal indicado, incluidos los que tienen disponible cero.
+        quantity es total menos reservado, leído de MySQL sin caché ni índice de búsqueda.
+        Sin registros devuelve lista vacía; esta consulta no certifica la existencia de la sucursal.
       responses:
         '200':
           description: El stock de la sucursal.
@@ -160,6 +185,12 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/branches/{branchId}/products/{productId}/stock:
@@ -170,7 +201,11 @@ paths:
       tags: [Stock]
       operationId: getBranchProductStock
       summary: Ver el stock de un producto en una sucursal
-      description: Si el producto existe pero no tiene stock cargado en esa sucursal, devuelve cantidad 0.
+      description: >-
+        quantity es el stock disponible (total menos reservado), leído de MySQL sin caché
+        ni índice de búsqueda. Si el producto existe pero no tiene registro en ese id de
+        sucursal, devuelve 0. Esta consulta no certifica la existencia de la sucursal.
+        Consultar no reserva unidades ni garantiza su disponibilidad futura.
       responses:
         '200':
           description: El stock del producto en la sucursal.
@@ -189,6 +224,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/ProductNotFound'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
 components:
@@ -261,6 +302,39 @@ components:
           example:
             code: PRODUCT_NOT_FOUND
             message: No existe el producto 15.
+    Forbidden:
+      description: Identidad válida sin permiso para esta operación.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: FORBIDDEN
+            message: No tenés permiso para esta operación.
+    RateLimited:
+      description: Se excedió el límite de solicitudes.
+      headers:
+        Retry-After:
+          description: Segundos sugeridos antes de reintentar, cuando se puede estimar.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: RATE_LIMITED
+            message: Se excedió el límite. Espaciá las solicitudes.
+    ServiceUnavailable:
+      description: Una dependencia necesaria no está disponible. No representa stock cero.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: SERVICE_UNAVAILABLE
+            message: El servicio no está disponible temporalmente.
     InternalError:
       description: Error de nuestro lado.
       content:
@@ -333,7 +407,12 @@ components:
         quantity:
           type: integer
           minimum: 0
-          description: Unidades en la sucursal al momento de la consulta. Nunca es negativa.
+          description: >-
+            Unidades disponibles al momento de la consulta: cantidad total menos cantidad
+            reservada. Nunca es negativa. Por ejemplo, total 46 y reservado 4 da quantity 42.
+            Es la cantidad mostrada como stock disponible en pantallas y utilizada en el
+            filtro interno de stock bajo por sucursal (disponible menor o igual a 5).
+          example: 42
     ApiError:
       type: object
       required: [code, message]
