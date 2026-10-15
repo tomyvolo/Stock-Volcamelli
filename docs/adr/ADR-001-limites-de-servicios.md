@@ -1,7 +1,7 @@
 # ADR-001 — Límites de los servicios (D1)
 
 ## Estado
-Reemplazado por [ADR-014](ADR-014-limites-de-servicios.md). Lo dejamos como registro de lo que decidimos en la Entrega 1.
+Reemplazado por [ADR-014](ADR-014-limites-de-servicios.md). Lo dejamos como registro de lo que habíamos decidido antes.
 
 ## Contexto
 El sistema maneja usuarios, sucursales, productos con su stock y avisos de stock bajo. Teníamos que repartir eso en servicios de forma que cada dato tenga un solo dueño.

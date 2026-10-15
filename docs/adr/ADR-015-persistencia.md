@@ -1,61 +1,47 @@
 # ADR-015 — Persistencia (D3)
 
 ## Estado
-Aceptado. Reemplaza a [ADR-003](ADR-003-persistencia-inicial.md). Diseño actualizado con reservas; implementación pendiente.
+Aceptado. Reemplaza a [ADR-003](ADR-003-persistencia-inicial.md).
 
 ## Por qué revisamos ADR-003
-Para las bases relacionales pasamos de PostgreSQL a MySQL por la familiaridad del equipo con Go, GORM y el driver de MySQL. Ambos motores podían cubrir las transacciones necesarias. Con los servicios de [ADR-014](ADR-014-limites-de-servicios.md), elegimos MongoDB en Transferencias.
+Cuando empezamos a pensar la implementación revisamos dos cosas. Para las bases relacionales pasamos de PostgreSQL a MySQL, porque las herramientas que usamos en el backend (Go con GORM y el driver de MySQL) nos dan más facilidad para conectarnos, definir los modelos y armar las migraciones. Además, con los servicios nuevos de [ADR-014](ADR-014-limites-de-servicios.md), decidimos usar MongoDB en Transferencias.
 
 ## Decisión
 Cada servicio tiene su propio servidor de base de datos y es el único que lo usa.
 
 | Servicio | Base | Qué guarda y cómo se consulta |
 |---|---|---|
-| Usuarios | MySQL | Usuarios, credenciales y roles `ADMIN`, `OPERATOR`, `INTEGRACION`; búsquedas por id/email único |
-| Sucursales | MySQL | Sucursales con nombre y dirección; consulta por id |
-| Inventario | MySQL | Productos, existencias, reservas y movimientos; por producto/sucursal e id de reserva |
-| Transferencias | MongoDB | Documento por transferencia con estado, historial e id externo; por id, estado y sucursal/fecha |
+| Usuarios | MySQL | Usuarios con email único. Se buscan por id o por email al hacer login |
+| Sucursales | MySQL | Sucursales con nombre y dirección. Se buscan por id |
+| Inventario | MySQL | Productos, stock por sucursal, reservas y movimientos |
+| Transferencias | MongoDB | Una transferencia por documento, con su historial de estados |
 
-Cada MySQL corre en su contenedor, con credenciales propias. Las dos instancias de Inventario usan el mismo MySQL del servicio. Esto aísla accesos y recursos, pero no elimina fallas del host compartido.
+Cada MySQL corre en su propio contenedor. Así, si una base se cae o se llena, los otros servicios siguen funcionando. Las dos instancias de Inventario usan el mismo MySQL de Inventario.
 
 ### Inventario
-El stock almacena `cantidad_total` y `cantidad_reservada`; el disponible se calcula como su diferencia. MySQL con InnoDB debe hacer cumplir `UNIQUE(producto, sucursal)` y `CHECK(0 <= reservada AND reservada <= total)`. Se elegirá una versión de MySQL 8 que aplique esos CHECK.
+De cada producto en cada sucursal guardamos dos números: la cantidad total y la cantidad reservada. El stock disponible es la diferencia, y es el que mostramos y el que usamos para decidir si una transferencia se puede hacer. La base hace cumplir dos reglas: la combinación producto y sucursal no se repite (`UNIQUE`) y lo reservado nunca es negativo ni mayor que el total (`CHECK`, que MySQL respeta desde la 8.0.16).
 
-Reservar bloquea la fila de stock y crea una reserva única por transferencia. Solo incrementa reservado si hay disponible suficiente. El estado de la reserva es `ACTIVA`, `CONFIRMADA` o `LIBERADA`; los dos últimos son finales.
+Las tres operaciones de una transferencia son transacciones de esta base:
 
-Confirmar bloquea la reserva y las filas de origen/destino en orden estable. En **una sola transacción**:
+- **Reservar.** Lee la fila del origen con `SELECT ... FOR UPDATE`. Si el disponible alcanza, suma a lo reservado y crea la reserva, identificada por el id de la transferencia, en estado `ACTIVA`.
+- **Confirmar** (cuando Rumbo acepta). En una sola transacción resta la cantidad del total y de lo reservado en el origen, la suma al total del destino (si el destino no tenía fila, la crea), pasa la reserva a `CONFIRMADA` y registra un movimiento de salida y uno de entrada.
+- **Liberar** (cuando Rumbo rechaza o la reserva falló). Resta de lo reservado en el origen y pasa la reserva a `LIBERADA`. Si la reserva todavía no existía, la crea directamente como `LIBERADA`, así un pedido de reserva que llega tarde se rechaza.
 
-1. Comprueba reserva activa, parámetros y decisión de aceptación recibida del servicio autorizado.
-2. Resta cantidad de total y reservado en origen.
-3. Suma cantidad al total en destino.
-4. Cierra la reserva y registra salida y entrada, resultado idempotente y outbox.
+Bloqueamos con `FOR UPDATE` en la base y no con locks en memoria, porque hay dos instancias de Inventario y un lock en memoria solo protege a una. Los ajustes manuales siguen la misma regla: una salida no puede bajar el total por debajo de lo reservado.
 
-Si falta la fila destino, se crea de manera segura bajo la restricción única antes de aplicar los cambios. Un deadlock o conflicto de unicidad aborta la transacción completa; el reintento usa la misma identidad y relee las reglas. No hay locks en memoria como única protección: deben funcionar entre dos instancias.
-
-Liberar descuenta solo reservado en origen y cierra la reserva, con movimiento, resultado y outbox en la misma transacción. Si el pedido de reserva todavía no llegó, se registra una marca final `LIBERADA` para impedir una reserva tardía. Confirmar una liberada o liberar una confirmada devuelve conflicto sin modificar cantidades. Las salidas manuales no pueden reducir el total por debajo del reservado.
-
-Además del stock hay registros de operaciones idempotentes (clave, tipo, huella, resultado), outbox y mensajes consumidos. Se deduplica por evento y por efecto de negocio (`transferencia + operación`), con restricciones únicas y transacción conjunta. **No hay una tabla con los estados de negocio de Transferencias ni una segunda copia de su historial.** Las reservas y resultados finales se conservan durante toda la evaluación; no se vencen por TTL.
+En esta misma base van dos tablas más: la de eventos ya procesados, para no confirmar ni liberar dos veces la misma reserva ([ADR-016](ADR-016-comunicacion-entre-servicios.md)), y la de eventos a publicar (outbox), para avisarle al buscador los cambios de productos y stock (ADR de D6).
 
 ### Transferencias
-Cada transferencia es un documento con pedido, clave del solicitante, estado, versión, historial, decisión, fase a reconciliar, referencia de reserva, id que le dio Rumbo y eventos pendientes. Estado y outbox se guardan en una actualización atómica condicionada a la versión/estado anterior. Un índice único por usuario y clave de idempotencia evita dos transferencias para la misma intención.
+Cada transferencia es un documento con lo que se pidió, su estado actual, la lista de estados por los que pasó, el id que le dio Rumbo, el motivo si se rechazó y los eventos pendientes de publicar. Un cambio de estado y su evento se guardan en el mismo documento, y en MongoDB escribir un documento es atómico, así que no se puede guardar uno sin el otro.
 
-Índices por estado y próxima revisión permiten recuperar trabajo después de un reinicio; por sucursal de origen y fecha permiten consultar el historial. Las escrituras del proceso deben ser durables antes de responder o enviar mensajes.
+Las consultas son tres: por id, por estado (los procesos de fondo buscan las que todavía no se mandaron a Rumbo o esperan respuesta) y por sucursal y fecha (las pantallas del operador). Para eso ponemos índices en `estado` y en `sucursal_origen` + `fecha`.
 
-MongoDB permite leer el proceso como una unidad y guardar evidencia externa con forma variable. No depende de que Rumbo tenga una contrapropuesta u otros campos particulares: eso se adapta al contrato recibido. Una alternativa relacional también es viable, pero requiere coordinar transferencia, historial y outbox en varias tablas.
-
-El historial guarda transiciones de negocio, no cada intento técnico. Los eventos publicados pueden depurarse después de confirmar su envío y conservar la evidencia necesaria; los pendientes nunca se eliminan. Se deberá controlar el tamaño del documento y definir archivado si crece el uso.
-
-### Copias de lectura
-Solr indexa catálogo y disponible por sucursal; Memcached cachea fichas de producto sin stock. Ambos son reconstruibles y no deciden reservas, ajustes ni confirmaciones. Las claves de caché y documentos de búsqueda no sustituyen MySQL. La sincronización y los desfases están definidos en [arquitectura](../ARCHITECTURE.md).
+Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en tres tablas (transferencia, historial de estados y eventos pendientes) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una contrapropuesta trae un horario. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
 
 ## Alternativas que descartamos
-- **Seguir con PostgreSQL.** Cubría las mismas garantías, pero priorizamos herramientas conocidas por el equipo.
-- **Guardar cantidades en Transferencias.** Duplicaría la propiedad del stock y haría más difícil una confirmación atómica.
-- **Usar caché o índice para validar disponibilidad.** Pueden estar atrasados o ausentes.
-- **Usar solo MySQL también para el proceso.** Es viable; se elige el documento por sus consultas como unidad, aceptando operar otro motor.
+- **Seguir con PostgreSQL.** Funcionaba igual, pero con las herramientas que usamos en Go nos resulta más fácil trabajar con MySQL.
 
 ## Consecuencias
-- Hay cuatro bases de negocio (tres MySQL y un MongoDB) y copias de lectura adicionales.
-- No hay rollback global entre servicios: Inventario protege las cantidades y Transferencias reconcilia el proceso.
-- Las reservas retenidas ante incertidumbre reducen disponibilidad; priorizamos no duplicar ni liberar unidades inseguramente.
-- Hay costo de almacenamiento de movimientos, idempotencia y outbox; retención y mantenimiento deberán medirse.
+- Hay que levantar cuatro bases (tres MySQL y un MongoDB) y configurar cada una.
+- Una transferencia queda guardada en Transferencias y el stock que mueve queda en Inventario, en bases distintas. Por eso no podemos confirmar las dos cosas juntas con una transacción: Transferencias avisa con un evento e Inventario confirma o libera por su cuenta.
+- Las reservas y los eventos procesados se guardan siempre, así que esas tablas crecen con el tiempo.

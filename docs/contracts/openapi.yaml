@@ -3,12 +3,8 @@ info:
   title: Stock Volcamelli - Inventario
   version: 1.0.0
   description: >-
-    Consultas del catálogo de productos y del stock por sucursal de Stock Volcamelli.
-    Las consultas son de lectura y requieren un token obtenido con el login.
-    Los roles ADMIN, OPERATOR e INTEGRACION pueden consultar; INTEGRACION no puede escribir.
-    quantity siempre representa stock disponible: cantidad total menos cantidad reservada.
-    Las reservas no acreditan stock en destino hasta su confirmación tras la aceptación de Rumbo.
-    Diseño pendiente de implementación; Prism devuelve ejemplos y no ejecuta estas reglas.
+    Consultas del catálogo de productos y del stock disponible por sucursal de Stock Volcamelli.
+    Todas las operaciones son de lectura y requieren un token que se obtiene con el login.
 servers:
   - url: http://localhost:4010
     description: Mock local de Prism
@@ -20,7 +16,7 @@ tags:
   - name: Productos
     description: Catálogo de productos
   - name: Stock
-    description: Stock por sucursal
+    description: Stock disponible por sucursal
 paths:
   /api/auth/login:
     post:
@@ -63,10 +59,10 @@ paths:
                 message: El email o la contraseña son incorrectos.
         '429':
           $ref: '#/components/responses/RateLimited'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/products:
     get:
       tags: [Productos]
@@ -103,10 +99,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimited'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/products/{productId}:
     parameters:
       - $ref: '#/components/parameters/ProductId'
@@ -114,9 +110,6 @@ paths:
       tags: [Productos]
       operationId: getProduct
       summary: Ver un producto
-      description: >-
-        Ficha sin cantidades de stock. Puede servirse desde Memcached con un desfase máximo
-        de 60 segundos; la autenticación y autorización se verifican antes de usar la caché.
       responses:
         '200':
           description: El producto.
@@ -133,31 +126,29 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/ProductNotFound'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProductNotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/branches/{branchId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
     get:
       tags: [Stock]
       operationId: listBranchStock
-      summary: Ver el stock de una sucursal
+      summary: Ver el stock disponible de una sucursal
       description: >-
-        Devuelve el stock disponible de todos los productos con un registro de existencias
-        en el id de sucursal indicado, incluidos los que tienen disponible cero.
-        quantity es total menos reservado, leído de MySQL sin caché ni índice de búsqueda.
-        Sin registros devuelve lista vacía; esta consulta no certifica la existencia de la sucursal.
+        Devuelve todos los productos que tienen stock cargado en la sucursal. Si la sucursal
+        no tiene ninguno, la lista viene vacía.
       responses:
         '200':
-          description: El stock de la sucursal.
+          description: El stock disponible de la sucursal.
           content:
             application/json:
               schema:
@@ -189,10 +180,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimited'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/branches/{branchId}/products/{productId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
@@ -200,15 +191,11 @@ paths:
     get:
       tags: [Stock]
       operationId: getBranchProductStock
-      summary: Ver el stock de un producto en una sucursal
-      description: >-
-        quantity es el stock disponible (total menos reservado), leído de MySQL sin caché
-        ni índice de búsqueda. Si el producto existe pero no tiene registro en ese id de
-        sucursal, devuelve 0. Esta consulta no certifica la existencia de la sucursal.
-        Consultar no reserva unidades ni garantiza su disponibilidad futura.
+      summary: Ver el stock disponible de un producto en una sucursal
+      description: Si el producto existe pero no tiene stock cargado en esa sucursal, devuelve cantidad 0.
       responses:
         '200':
-          description: El stock del producto en la sucursal.
+          description: El stock disponible del producto en la sucursal.
           content:
             application/json:
               schema:
@@ -222,16 +209,16 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/ProductNotFound'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ProductNotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 components:
   securitySchemes:
     bearerAuth:
@@ -293,6 +280,15 @@ components:
           example:
             code: UNAUTHORIZED
             message: Falta el token o venció. Volvé a hacer login.
+    Forbidden:
+      description: El token es válido, pero el rol no tiene permiso para esta operación.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: FORBIDDEN
+            message: No tenés permiso para esta operación.
     ProductNotFound:
       description: El producto no existe.
       content:
@@ -302,20 +298,11 @@ components:
           example:
             code: PRODUCT_NOT_FOUND
             message: No existe el producto 15.
-    Forbidden:
-      description: Identidad válida sin permiso para esta operación.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: FORBIDDEN
-            message: No tenés permiso para esta operación.
     RateLimited:
-      description: Se excedió el límite de solicitudes.
+      description: Se pasaron del límite de pedidos por minuto.
       headers:
         Retry-After:
-          description: Segundos sugeridos antes de reintentar, cuando se puede estimar.
+          description: Cuántos segundos esperar antes de volver a intentar.
           schema:
             type: integer
             minimum: 1
@@ -325,16 +312,7 @@ components:
             $ref: '#/components/schemas/ApiError'
           example:
             code: RATE_LIMITED
-            message: Se excedió el límite. Espaciá las solicitudes.
-    ServiceUnavailable:
-      description: Una dependencia necesaria no está disponible. No representa stock cero.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: SERVICE_UNAVAILABLE
-            message: El servicio no está disponible temporalmente.
+            message: Hiciste demasiados pedidos. Esperá un momento y volvé a intentar.
     InternalError:
       description: Error de nuestro lado.
       content:
@@ -344,6 +322,15 @@ components:
           example:
             code: INTERNAL_ERROR
             message: Ocurrió un error inesperado. Probá de nuevo en unos minutos.
+    ServiceUnavailable:
+      description: Inventario no está disponible en este momento.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: SERVICE_UNAVAILABLE
+            message: El servicio no está disponible. Probá de nuevo en unos minutos.
   schemas:
     LoginInput:
       type: object
@@ -408,11 +395,9 @@ components:
           type: integer
           minimum: 0
           description: >-
-            Unidades disponibles al momento de la consulta: cantidad total menos cantidad
-            reservada. Nunca es negativa. Por ejemplo, total 46 y reservado 4 da quantity 42.
-            Es la cantidad mostrada como stock disponible en pantallas y utilizada en el
-            filtro interno de stock bajo por sucursal (disponible menor o igual a 5).
-          example: 42
+            Stock disponible en la sucursal al momento de la consulta: el total menos lo que
+            está reservado para transferencias que todavía esperan la respuesta de Rumbo.
+            Nunca es negativo.
     ApiError:
       type: object
       required: [code, message]

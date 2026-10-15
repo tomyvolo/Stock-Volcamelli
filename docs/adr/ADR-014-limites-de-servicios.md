@@ -1,47 +1,47 @@
 # ADR-014 — Límites de los servicios (D1)
 
 ## Estado
-Aceptado. Reemplaza a [ADR-001](ADR-001-limites-de-servicios.md). Esta revisión completa el diseño con reservas; la implementación está pendiente.
+Aceptado. Reemplaza a [ADR-001](ADR-001-limites-de-servicios.md).
 
 ## Por qué revisamos ADR-001
-En la Entrega 1 habíamos separado el sistema en Usuarios, Sucursales, Inventario y Notificaciones. Cuando lo repasamos contra la consigna encontramos dos problemas.
+Al principio habíamos separado el sistema en Usuarios, Sucursales, Inventario y Notificaciones. Cuando lo repasamos encontramos dos problemas.
 
-El primero es que Inventario hacía demasiado: productos, stock, movimientos y transferencias. Inventario es el servicio que le publicamos al otro grupo, y las transferencias dependen de Rumbo, el servicio de traslados de otro grupo que nos asignaron. Con todo junto, si Rumbo se cae o cambia su contrato, el problema llega hasta lo que publicamos. Separar stock y transferencias ya lo habíamos pensado y lo habíamos descartado para no partir la transacción. Ahora separamos el proceso, pero mantenemos todas las modificaciones de cantidades en Inventario.
+El primero es que Inventario hacía demasiado: productos, stock, movimientos y transferencias. Inventario es el servicio que le publicamos al otro grupo, y las transferencias dependen de Rumbo, el servicio de traslados de otro grupo que nos asignaron. Con todo junto, si Rumbo se cae o cambia su contrato, el problema llega hasta lo que publicamos. Separar stock y transferencias ya lo habíamos pensado y lo habíamos descartado para no partir la transacción. Ahora volvemos a esa idea: preferimos coordinar dos servicios antes que tener el servicio publicado atado a Rumbo.
 
-El segundo es que el servicio anterior de avisos no aportaba una funcionalidad necesaria. El stock bajo se consulta en el catálogo; Transferencias cubre una necesidad real y justifica su almacenamiento documental y consumo de eventos.
+El segundo es que Notificaciones no aportaba nada al negocio. Lo habíamos puesto más que nada para tener una base no relacional y alguien que consuma eventos, y las dos cosas las cubrimos con las transferencias.
 
 ## Decisión
 Quedan cuatro servicios detrás de un API Gateway:
 
 | Servicio | Qué hace | Datos de los que es dueño |
 |---|---|---|
-| Usuarios | Usuarios, login y roles `ADMIN`, `OPERATOR` e `INTEGRACION` | Usuarios y credenciales |
+| Usuarios | Usuarios, login y roles (`ADMIN`, `OPERATOR` e `INTEGRACION`) | Usuarios |
 | Sucursales | Alta, modificación y consulta de sucursales | Sucursales, con su dirección |
-| Inventario | Catálogo, stock disponible, reservas, ajustes y movimientos. Publica las consultas | Productos, existencias totales y reservadas, reservas y movimientos |
-| Transferencias | Administra la transferencia y consume Rumbo | Proceso, estados, historial, decisión e id del traslado en Rumbo |
+| Inventario | Catálogo de productos, stock por sucursal, reservas, movimientos y ajustes manuales. Es la capacidad que publicamos | Productos, stock, reservas y movimientos |
+| Transferencias | Registra las transferencias, le pide el traslado a Rumbo y decide si se confirman o se liberan | Transferencias y su estado |
 
-El gateway es la entrada del frontend y del grupo consumidor; no guarda datos ni coordina el negocio. `ADMIN` administra y opera; `OPERATOR` consulta y crea transferencias; `INTEGRACION` solo consulta catálogo y stock. Los servicios también validan permisos.
+El gateway es la entrada del frontend y del grupo que consume nuestro catálogo, y no guarda datos.
 
-Cada dato tiene un solo dueño. Solo Inventario modifica cantidades. Sus claves de idempotencia y estados de reserva protegen operaciones locales; no son otra copia del proceso de Transferencias. Nadie lee la base de otro.
+El criterio fue que cada dato tenga un solo dueño. Las cantidades de stock las cambia únicamente Inventario: Transferencias le pide que reserve, confirme o libere unidades, pero nunca las toca. Ningún servicio lee la base de otro.
 
 Las relaciones entre servicios son:
 
-- Transferencias consulta nombres y direcciones a Sucursales; el formato externo lo determinará el contrato que entregue el grupo de Rumbo.
-- Transferencias pide a Inventario reservar y consulta el resultado por id. Inventario reserva solo si alcanza `total − reservado`; el destino no cambia.
-- Transferencias pide el traslado a Rumbo y registra su resultado. No se asumen operaciones externas aún no documentadas.
-- Transferencias publica aceptación, rechazo o vencimiento seguro. Inventario confirma o libera una única vez y publica el resultado para que Transferencias cierre su estado.
-- Inventario valida sucursales al hacer ajustes y publica cambios para sus proyecciones de búsqueda e invalidación de caché.
+- Transferencias consulta a Sucursales el nombre y la dirección de origen y destino, porque Rumbo los pide.
+- Transferencias le pide a Inventario que reserve las unidades en el origen. Si no hay stock disponible suficiente, Inventario lo rechaza.
+- Transferencias le pide el traslado a Rumbo y sigue si lo acepta o lo rechaza.
+- Si Rumbo acepta, Transferencias publica `TrasladoAceptado` e Inventario mueve el stock del origen al destino. Si Rumbo rechaza, publica `TrasladoRechazado` e Inventario libera la reserva.
+- Inventario consulta a Sucursales que la sucursal exista cuando un ADMIN hace un ajuste.
 
-Las llamadas internas salen del servicio responsable. Las dirigidas a Inventario pasan por su NGINX interno, sin volver al gateway. Cómo se comunican y reconcilian se explica en [ADR-016](ADR-016-comunicacion-entre-servicios.md).
+Cómo se comunican lo explicamos en [ADR-016](ADR-016-comunicacion-entre-servicios.md).
 
 ## Alternativas que descartamos
-- **Dejar el proceso de transferencias dentro de Inventario.** El servicio publicado dependería de Rumbo.
-- **Mantener un servicio aparte de avisos.** Agregaba operación sin una necesidad dentro del alcance.
-- **Acreditar destino antes de la aceptación.** Permitiría consumir esas unidades y luego impediría deshacer el movimiento ante un rechazo. Reservar evita ese problema.
+- **Dejar las transferencias dentro de Inventario, como en ADR-001.** Es lo que había y lo que queremos evitar: el servicio publicado dependería de Rumbo.
+- **Tener un servicio de Notificaciones aparte.** Era un servicio más para levantar y mantener, y no cubría ninguna funcionalidad que alguien necesitara.
+- **Mover el stock en el momento y devolverlo si Rumbo rechaza.** Fue lo primero que pensamos, porque la transferencia se veía hecha enseguida. El problema es que, mientras Rumbo decide, el destino puede vender esas unidades, y si después Rumbo rechaza no hay cómo devolverlas. Con la reserva eso no pasa: el destino recibe el stock recién cuando Rumbo acepta.
 
 ## Consecuencias
-- La confirmación de salida y entrada sigue siendo una transacción local de Inventario. El estado del proceso se completa después, mediante eventos o reconciliación.
-- El disponible baja al reservar; el total se mueve solo al confirmar. Rechazar libera origen sin tocar destino.
-- El stock bajo se ve en la búsqueda por sucursal con disponible de 5 o menos.
-- La aceptación de Rumbo habilita el cierre contable; el seguimiento físico del viaje queda fuera de alcance.
-- Si Rumbo no está disponible, catálogo y stock siguen consultables; las transferencias pueden quedar pendientes y retener reservas.
+- Una transferencia pasa por dos servicios. La confirmación o la liberación llega por un evento, no por un rollback.
+- Mientras Rumbo decide, las unidades reservadas no se pueden usar en el origen, y el destino todavía no las tiene.
+- Ya no hay notificaciones de stock bajo. El stock bajo se ve como un filtro en la búsqueda del catálogo.
+- Sucursales tiene que guardar la dirección de cada sucursal, porque sin eso no podemos pedirle traslados a Rumbo.
+- Si Rumbo no está disponible, el catálogo y el stock que publicamos siguen funcionando. Las transferencias nuevas quedan reservadas esperando.

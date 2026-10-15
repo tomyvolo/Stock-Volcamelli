@@ -1,119 +1,95 @@
 # Contrato de Inventario
 
-Le ofrecemos al otro grupo consultar catálogo y **stock disponible**. Las consultas no permiten crear ni modificar datos. [OpenAPI](openapi.yaml) describe las operaciones y [ADR-017](../adr/ADR-017-contrato-propio.md) explica las decisiones.
-
-El campo de versión vigente sigue en **1.0.0**. Es un diseño pendiente de implementación; el mock devuelve ejemplos, no cantidades reales.
+Le ofrecemos al otro grupo consultar nuestro catálogo de productos y el stock disponible de cada sucursal. Son solo lecturas: no se puede crear ni modificar nada. El contrato completo está en [openapi.yaml](openapi.yaml) y las decisiones detrás están en [ADR-017](../adr/ADR-017-contrato-propio.md).
 
 ## Operaciones
 
 | Método y ruta | Para qué |
 |---|---|
-| `POST /api/auth/login` | Obtener el token desde Usuarios |
-| `GET /api/products?page=1&size=20` | Listar productos; página desde 1, tamaño 1–100 (default 20) |
-| `GET /api/products/{productId}` | Ficha del producto, sin cantidades |
-| `GET /api/branches/{branchId}/stock` | Stock disponible de los productos registrados en esa sucursal |
-| `GET /api/branches/{branchId}/products/{productId}/stock` | Stock disponible de un producto en esa sucursal |
+| `POST /api/auth/login` | Obtener el token |
+| `GET /api/products?page=1&size=20` | Listar productos, de a una página |
+| `GET /api/products/{productId}` | Ver un producto |
+| `GET /api/branches/{branchId}/stock` | Ver el stock disponible de todos los productos de una sucursal |
+| `GET /api/branches/{branchId}/products/{productId}/stock` | Ver el stock disponible de un producto en una sucursal |
 
-La búsqueda avanzada del frontend y las operaciones internas de reserva, confirmación y liberación no se agregan a esta capacidad pública.
+Algunas aclaraciones:
+- El stock que devolvemos (`quantity`) es el **disponible**: el total menos las unidades reservadas para transferencias que todavía esperan la respuesta del transporte. Por ejemplo, si una sucursal tiene 46 unidades y 4 están reservadas, devolvemos 42.
+- Si una sucursal no tiene stock cargado, la consulta de su stock devuelve una lista vacía.
+- Si un producto existe pero no tiene stock en esa sucursal, la cantidad viene en 0.
+- El stock es el del momento de la consulta y puede cambiar enseguida.
 
-## Qué significa el stock
+## Autenticación
 
-`quantity = cantidad total − cantidad reservada`. Siempre es no negativa. Una reserva reduce el disponible en origen, sin modificar su total ni acreditar unidades en destino. Solo después de la aceptación de Rumbo, Inventario confirma la salida y la entrada de forma atómica. Un rechazo o vencimiento seguro libera la reserva; un timeout mantiene resultado desconocido hasta reconciliarlo.
+Le creamos al grupo consumidor una cuenta con el rol `INTEGRACION`, que solo puede hacer estas consultas. El email y la contraseña los pasamos por privado, no están en el repositorio.
 
-Las pantallas muestran “stock disponible”. El filtro interno de stock bajo usa esa misma cantidad y selecciona disponible ≤ 5, incluido cero, en una sucursal. La búsqueda puede estar hasta 5 s atrasada con dependencias sanas; **las consultas de stock de este contrato leen MySQL**, sin caché ni Solr.
-
-Se mantiene el comportamiento existente:
-
-- Sin registros de stock en el id de sucursal, el listado devuelve una lista vacía.
-- Si el producto existe pero no tiene registro en ese id de sucursal, la consulta puntual devuelve `quantity: 0`.
-- Estas consultas no verifican ni certifican la existencia de la sucursal. Las operaciones internas la validan con Sucursales.
-- Una consulta no reserva unidades y su resultado puede cambiar enseguida.
-- La ficha de producto puede usar Memcached, con hasta 60 s de desfase de nombre/descripción/proveedor; no contiene stock. El listado básico del catálogo consulta MySQL.
-
-## Autenticación y permisos
-
-`ADMIN` y `OPERATOR` pueden leer estas consultas. Al grupo consumidor se le crea una cuenta `INTEGRACION`, que solo puede hacer login y usar las consultas publicadas; no modifica datos ni crea transferencias. Email y contraseña se entregan por privado.
-
-1. Hacer login y guardar el `token`.
-2. Enviar `Authorization: Bearer <token>` en cada consulta.
-3. El token dura 1 hora (`expiresIn: 3600`). Cuando vence, volver a hacer login.
-
-Gateway y servicio aplican permisos antes de consultar datos o caché. Los GET son idempotentes y no requieren `Idempotency-Key`; ese encabezado pertenece a operaciones de escritura internas, fuera de este contrato.
+1. Hacer login con esa cuenta y guardar el `token` de la respuesta.
+2. Mandarlo en todas las consultas en el header `Authorization: Bearer <token>`.
+3. El token dura 1 hora (`expiresIn` viene en segundos). Cuando vence, las consultas devuelven `401` y hay que volver a hacer login.
 
 ## Errores
 
-Formato:
+Todos los errores tienen el mismo formato:
 
 ```json
 { "code": "PRODUCT_NOT_FOUND", "message": "No existe el producto 15." }
 ```
 
-| HTTP | code | Qué hacer |
-|---|---|---|
-| 400 | `INVALID_REQUEST` | Corregir los parámetros |
-| 401 | `UNAUTHORIZED` | Obtener un token válido |
-| 401 | `INVALID_CREDENTIALS` | Revisar credenciales del login |
-| 403 | `FORBIDDEN` | Verificar permisos; no insistir con la misma identidad |
-| 404 | `PRODUCT_NOT_FOUND` | Revisar el id de producto |
-| 429 | `RATE_LIMITED` | Respetar `Retry-After` cuando esté presente y espaciar pedidos |
-| 500 | `INTERNAL_ERROR` | Error interno; reintentar las lecturas con límite |
-| 503 | `SERVICE_UNAVAILABLE` | Dependencia necesaria no disponible; reintentar más tarde |
-
-Nunca se devuelve stock cero o lista vacía para ocultar una falla de base. Propuesta para el consumidor: timeout de 3 s por lectura y hasta dos reintentos de GET ante 429/503 o fallas transitorias, con backoff y jitter, respetando `Retry-After`. Las validaciones y errores de permiso no se reintentan. Los límites definitivos se comunicarán con las pruebas de carga.
+| HTTP | `code` | Qué pasó | Qué hacer |
+|---|---|---|---|
+| 400 | `INVALID_REQUEST` | Algún parámetro es inválido | Corregir el pedido |
+| 401 | `UNAUTHORIZED` | Falta el token, no es válido o venció | Volver a hacer login |
+| 401 | `INVALID_CREDENTIALS` | Email o contraseña incorrectos en el login | Revisar los datos de la cuenta |
+| 403 | `FORBIDDEN` | La cuenta no tiene permiso para esa operación | Usar solo las operaciones de este contrato |
+| 404 | `PRODUCT_NOT_FOUND` | El producto no existe | Verificar el id |
+| 429 | `RATE_LIMITED` | Se pasaron del límite de pedidos por minuto | Esperar los segundos que indica el header `Retry-After` |
+| 500 | `INTERNAL_ERROR` | Error de nuestro lado | Probar de nuevo más tarde |
+| 503 | `SERVICE_UNAVAILABLE` | Inventario no está disponible en ese momento | Probar de nuevo más tarde |
 
 ## Ejemplos
 
-Comandos para Bash; en PowerShell puede usarse `curl.exe` en una sola línea con el escape de JSON correspondiente. Credenciales y token son ejemplos ficticios.
+Login:
 
 ```bash
 curl -X POST http://localhost:4010/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"integracion@grupo-consumidor.com","password":"una-clave-de-ejemplo"}'
+  -d '{"email": "integracion@grupo-consumidor.com", "password": "una-clave-de-ejemplo"}'
+```
 
+Listar productos:
+
+```bash
 curl "http://localhost:4010/api/products?page=1&size=20" \
   -H "Authorization: Bearer <token>"
+```
 
+Stock de un producto en una sucursal:
+
+```bash
 curl http://localhost:4010/api/branches/3/products/15/stock \
   -H "Authorization: Bearer <token>"
 ```
 
-Con total 46 y reservado 4, la última consulta devuelve:
+Respuesta:
 
 ```json
 { "branchId": 3, "productId": 15, "productName": "Harina 000", "quantity": 42 }
 ```
 
-Ejemplo completo del flujo (cantidades internas para explicar el cálculo; los campos de respuesta siguen siendo los del contrato):
-
-| Momento | Origen total/reservado | quantity origen | Destino total/reservado | quantity destino |
-|---|---|---|---|---|
-| Inicial | 10 / 0 | 10 | 2 / 0 | 2 |
-| Reserva de 4 | 10 / 4 | 6 | 2 / 0 | 2 |
-| Si Rumbo acepta e Inventario confirma | 6 / 0 | 6 | 6 / 0 | 6 |
-| Si Rumbo rechaza e Inventario libera, como alternativa a confirmar | 10 / 0 | 10 | 2 / 0 | 2 |
-
 ## Probar con el mock
 
-Con Docker iniciado, desde la raíz:
+Mientras Inventario no esté implementado, se puede probar contra un mock que se arma solo a partir de `openapi.yaml`. Hace falta Docker. Desde la raíz del repositorio:
 
 ```bash
 docker run --rm -p 4010:4010 -v "${PWD}/docs/contracts:/contrato" stoplight/prism:5 mock -h 0.0.0.0 /contrato/openapi.yaml
 ```
 
-El mock queda en `http://localhost:4010` y devuelve los ejemplos del archivo. Se puede seleccionar una respuesta documentada con `Prefer: code=404`, por ejemplo sobre la consulta de un producto.
+El mock queda en `http://localhost:4010`:
+- Devuelve las respuestas de ejemplo del contrato. No tiene datos reales ni guarda nada.
+- Valida los pedidos: si falta un parámetro obligatorio o tiene un valor inválido, responde `400`.
+- Pide el header `Authorization`. Sin el header responde `401`, pero acepta cualquier token.
 
-Prism permite verificar formas de pedidos/respuestas. No guarda stock, no ejecuta transferencias, no verifica credenciales reales ni demuestra los permisos JWT, expiración, límites de tráfico, TTL de caché o tiempos de sincronización. Sus errores de validación propios pueden tener un formato distinto al de la aplicación planificada. La ejecución del mock debe verificarse con Docker; describir el comando no demuestra que esté funcionando.
-
-## Publicación y pruebas pendientes
-
-La URL pública todavía no está disponible. Antes de compartirla se deben implementar gateway/login y consultas, entregar credenciales en privado, verificar las respuestas y mantener la capacidad operativa hasta terminar la evaluación. El consumidor debe incorporarla a un flujo de negocio relevante.
-
-Verificar contra el contrato todos los ejemplos, límites de paginación, errores y permisos. Incluir el caso total 10/reservado 5 → `quantity: 5`. El mock no reemplaza esas pruebas contra la implementación real.
-
-Rumbo es otra integración: su grupo nos entrega el contrato. No se agregan supuestos endpoints de Rumbo a este OpenAPI. Las dependencias por confirmar están en [arquitectura](../ARCHITECTURE.md#8-integración-con-otros-grupos).
+Para ver un error en particular se usa el header `Prefer`, por ejemplo `Prefer: code=404`.
 
 ## Cambios en el contrato
 
-No manejamos versiones. Solo hacemos cambios que no rompan lo que ya usa el otro grupo, como agregar operaciones o campos nuevos en las respuestas. No sacamos ni renombramos campos, ni cambiamos su tipo o significado. Si alguna vez hiciera falta, lo acordamos antes con el grupo consumidor. Conviene que el consumidor ignore los campos que no conoce.
-
-**Observaciones separadas:** se mantiene esta política y el campo `1.0.0`, pero queda pendiente resolver su relación con la exigencia de contrato versionado de la consigna. También debe coordinarse la interpretación de `quantity` como disponible si el consumidor esperaba total. Las nuevas respuestas documentadas 403/429/503 deben comunicarse y probarse con él antes de publicar.
+Solo hacemos cambios que no rompan lo que ya usa el otro grupo, como agregar operaciones o campos nuevos en las respuestas. No sacamos ni renombramos campos, ni cambiamos su tipo o su significado. Si alguna vez hiciera falta un cambio así, lo acordamos antes con el grupo consumidor. Conviene que el consumidor ignore los campos que no conoce, así un campo nuevo no le rompe nada.

@@ -1,10 +1,10 @@
 # ADR-017 — Contrato propio (D8)
 
 ## Estado
-Aceptado. Reemplaza a [ADR-008](ADR-008-contrato-de-integracion.md). Se precisa stock disponible; la API real está pendiente.
+Aceptado. Reemplaza a [ADR-008](ADR-008-contrato-de-integracion.md).
 
 ## Por qué revisamos ADR-008
-En ADR-008 publicábamos toda la API de Inventario, incluidas las transferencias y los movimientos. Con [ADR-014](ADR-014-limites-de-servicios.md) las transferencias pasaron a su propio servicio, y además no queremos que otro grupo pueda mover nuestro stock. El consumidor necesita consultar catálogo y disponibilidad, así que acotamos el contrato a eso.
+En ADR-008 publicábamos toda la API de Inventario, incluidas las transferencias y los movimientos. Con [ADR-014](ADR-014-limites-de-servicios.md) las transferencias pasaron a su propio servicio, y además nos dimos cuenta de que no queremos que otro grupo pueda mover nuestro stock. Lo que el grupo consumidor necesita es traer el catálogo con el stock de cada sucursal, así que achicamos el contrato a eso.
 
 ## Decisión
 Publicamos solamente consultas de Inventario:
@@ -13,50 +13,43 @@ Publicamos solamente consultas de Inventario:
 |---|---|
 | Listar productos (paginado) | `GET /api/products` |
 | Ver un producto | `GET /api/products/{productId}` |
-| Ver stock disponible de una sucursal | `GET /api/branches/{branchId}/stock` |
-| Ver stock disponible de un producto en una sucursal | `GET /api/branches/{branchId}/products/{productId}/stock` |
+| Ver el stock de una sucursal | `GET /api/branches/{branchId}/stock` |
+| Ver el stock de un producto en una sucursal | `GET /api/branches/{branchId}/products/{productId}/stock` |
 
-Además, `POST /api/auth/login` pertenece a Usuarios y permite obtener el token. Búsqueda avanzada y operaciones de reserva/confirmación/liberación no se agregan al contrato publicado.
+Además, el contrato incluye el login (`POST /api/auth/login`), que es de Usuarios y hace falta para obtener el token.
 
-El contrato está en [openapi.yaml](../contracts/openapi.yaml). Mientras no haya implementación, se prueba con Prism desde ese archivo. El mock solo muestra formas y ejemplos: no implementa seguridad ni reservas. La capacidad real deberá estar en una URL pública, con gateway y login accesibles, y mantenerse operativa hasta finalizar la evaluación.
+El stock que devolvemos (`quantity`) es el **disponible**: la cantidad total menos lo que está reservado para transferencias que esperan la respuesta de Rumbo. Es lo que el otro grupo realmente puede contar como existente en esa sucursal.
+
+El contrato está en [openapi.yaml](../contracts/openapi.yaml). Mientras Inventario no esté implementado, el otro grupo puede probar contra un mock que se levanta con Prism desde ese mismo archivo. Cuando Inventario esté desplegado en la nube, va a tener una URL pública.
 
 ### Autenticación
-Usamos JWT como para nuestros usuarios. `ADMIN` administra y opera, `OPERATOR` consulta y crea transferencias, e `INTEGRACION` solo consulta el contrato. El grupo consumidor recibe una cuenta de ese último rol.
-
-El token dura 1 hora y se envía en `Authorization: Bearer <token>`. Gateway y servicios aplican permisos. Al vencer hay que volver a hacer login. Credenciales por medio privado, nunca en Git.
-
-### Stock publicado
-`quantity` es **cantidad total menos cantidad reservada**, siempre no negativa. La pantalla muestra “stock disponible” y el filtro interno de stock bajo usa disponible ≤ 5 por sucursal. Reservar reduce el disponible de origen, sin acreditar destino. Confirmar tras aceptación de Rumbo mueve total en ambos extremos; liberar recupera disponible en origen.
-
-Ejemplo: total 46 y reservado 4 devuelve `quantity: 42`. Las lecturas de stock consultan MySQL; no usan Memcached ni Solr. Una lectura no reserva ni garantiza disponibilidad para una operación futura. La ficha de producto puede usar caché con hasta 60 s de desfase, pero no incluye cantidades.
+Usamos el mismo JWT que usan nuestros usuarios. Al grupo consumidor le creamos una cuenta en Usuarios con el rol `INTEGRACION`, que solo puede hacer estas consultas. Con esa cuenta hace login, recibe un token que dura 1 hora y lo manda en `Authorization: Bearer <token>` en cada pedido. El gateway valida el token igual que con cualquier usuario. Cuando vence, vuelven a hacer login.
 
 ### Errores
-Todos los errores usan código y mensaje:
+Todos los errores devuelven el mismo formato, con un código y un mensaje:
 
 | Código | Cuándo |
 |---|---|
-| `400` | Parámetros inválidos |
-| `401` | Token ausente/inválido/vencido o credenciales de login incorrectas |
-| `403` | Identidad válida sin permiso |
-| `404` | Producto inexistente |
-| `429` | Límite de tráfico excedido |
-| `500` | Error interno |
-| `503` | Dependencia necesaria no disponible |
-
-Se conserva el comportamiento de stock por sucursal: sin registros devuelve lista vacía, y un producto existente sin registro en ese id de sucursal devuelve cero. Estas consultas no certifican que la sucursal exista; esa validación pertenece a Sucursales y a las operaciones internas. No se cambia ese comportamiento agregando un nuevo error de sucursal inexistente.
+| `400` | Parámetros inválidos (por ejemplo, una página negativa) |
+| `401` | Falta el token, no es válido o venció; o el usuario y la contraseña del login son incorrectos |
+| `403` | El token es válido, pero el rol no tiene permiso para esa operación |
+| `404` | El producto no existe |
+| `429` | Se pasaron del límite de pedidos por minuto que pone el gateway |
+| `500` | Error nuestro |
+| `503` | Inventario no está disponible en ese momento |
 
 ### Compatibilidad
-No manejamos versiones del contrato. El `openapi.yaml` dice `version: 1.0.0` solo porque el formato OpenAPI exige ese campo. Para no romperle nada al otro grupo, solo hacemos cambios que no afecten lo que ya usa: podemos agregar operaciones nuevas o campos nuevos en las respuestas, pero no sacamos ni renombramos campos, ni cambiamos su tipo o su significado. Si alguna vez necesitáramos un cambio así, lo acordamos antes con el grupo consumidor.
-
-**Observación separada, sin cambiar la política:** la consigna exige contrato formal y versionado. Esta política sigue pendiente de revisión con el equipo/cátedra. Además, si el consumidor entendía `quantity` como total, precisar que es disponible cambia su interpretación: hay que comunicárselo y validar sus casos antes de publicar. No se afirma compatibilidad semántica automática ni se cambia `1.0.0`.
+Para no romperle nada al otro grupo, solo hacemos cambios que no afecten lo que ya usa: podemos agregar operaciones nuevas o campos nuevos en las respuestas, pero no sacamos ni renombramos campos, ni cambiamos su tipo o su significado. Si alguna vez hiciera falta un cambio así, lo acordamos antes con el grupo consumidor.
 
 ## Alternativas que descartamos
-- **Publicar toda la API.** Permitiría modificar cantidades y productos sin necesidad del consumidor.
-- **No autenticar.** La URL pública dejaría el catálogo accesible a cualquiera.
-- **API key adicional.** Agrega otro mecanismo cuando ya tenemos JWT.
+- **Seguir publicando toda la API de Inventario, como en ADR-008.** Le daba al otro grupo la posibilidad de crear productos y mover stock en nuestro sistema, y no lo necesita.
+- **No pedir autenticación.** Cuando Inventario esté en la nube con una URL pública, cualquiera podría consultar nuestro catálogo y stock.
+- **Una API key fija para el otro grupo.** Es más simple para ellos, pero nos dejaba con dos formas de autenticación distintas, cuando el gateway ya valida JWT.
+- **Devolver el stock total en vez del disponible.** El otro grupo vería unidades que ya están comprometidas en una transferencia.
 
 ## Consecuencias
-- El consumidor no modifica datos; las consultas GET no requieren `Idempotency-Key`. Esa clave sí se requiere en el flujo interno de creación de transferencias, fuera de este contrato.
-- El stock disponible puede cambiar después de leerlo.
-- El grupo consumidor renueva el token con login y debe manejar errores y límites.
-- Se mantienen rutas y campos existentes, con semántica de disponible explícita y observación de compatibilidad registrada.
+- El otro grupo no puede modificar nada; si necesita algo más, hay que agregar operaciones al contrato.
+- Como son solo lecturas, no hace falta `Idempotency-Key`.
+- El stock que devolvemos es el del momento de la consulta y puede cambiar enseguida.
+- El otro grupo tiene que hacer login y volver a pedir el token cada vez que vence.
+- Usuarios suma el rol `INTEGRACION`, y el usuario y la contraseña de esa cuenta se los pasamos por un medio privado, no en el repositorio.

@@ -1,22 +1,23 @@
-# Diagrama de Contexto
+# Diagrama de contexto
 
-Diseño planificado para Stock Volcamelli. El grupo consumidor usa nuestro catálogo y stock; Rumbo es el proveedor de traslados. Su contrato lo entrega el otro grupo.
+Muestra quién usa Stock Volcamelli y con qué sistemas externos se comunica.
 
 ```mermaid
 flowchart LR
     A["Administrador<br/>ADMIN"]
     O["Operador<br/>OPERATOR"]
     C["Grupo consumidor<br/>INTEGRACION"]
-    SV["Stock Volcamelli<br/>Inventario multisucursal"]
-    R["Rumbo<br/>Proveedor externo de traslados"]
+    SV["Stock Volcamelli"]
+    R["Rumbo<br/>Servicio de traslados de otro grupo"]
 
-    A -->|"Administra, ajusta y transfiere"| SV
-    O -->|"Consulta y crea transferencias"| SV
-    C -->|"Login, catálogo y stock disponible"| SV
-    SV -->|"Transferencias solicita traslado<br/>y reconcilia el resultado"| R
-    R -->|"Aceptación o rechazo<br/>según contrato pendiente"| SV
+    A -->|"Administra usuarios, sucursales y productos;<br/>hace ajustes y transferencias"| SV
+    O -->|"Consulta stock y crea transferencias"| SV
+    C -->|"Consulta catálogo y stock disponible"| SV
+    SV -->|"Pide traslados y consulta si los aceptan"| R
 ```
 
-`ADMIN` administra usuarios, sucursales, productos y ajustes, además de operar. `OPERATOR` consulta inventario y crea transferencias. `INTEGRACION` solo lee las consultas del contrato.
+- **Administrador y operador** usan el sistema desde el frontend.
+- **El grupo consumidor** es otro sistema que consulta nuestro catálogo y stock con la cuenta `INTEGRACION`. Solo puede leer.
+- **Rumbo** es el servicio de transporte de otro grupo. Le pedimos cada traslado y, según lo acepte o lo rechace, el stock pasa al destino o vuelve a estar disponible en el origen.
 
-El disponible es total menos reservado. La aceptación de Rumbo habilita la confirmación contable por Inventario; no seguimos el viaje físico. Las llamadas al proveedor salen de Transferencias. La interfaz y el consumidor entran por el API Gateway; los detalles internos están en el [diagrama de contenedores](contenedores.md).
+El detalle por dentro está en el [diagrama de contenedores](contenedores.md).

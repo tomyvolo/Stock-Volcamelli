@@ -1,7 +1,7 @@
 # ADR-008 — Contrato propio (D8)
 
 ## Estado
-Reemplazado por [ADR-017](ADR-017-contrato-propio.md). Lo dejamos como registro de lo que decidimos en la Entrega 1.
+Reemplazado por [ADR-017](ADR-017-contrato-propio.md). Lo dejamos como registro de lo que habíamos decidido antes.
 
 ## Contexto
 Otro grupo va a usar una capacidad de nuestro sistema, y elegimos ofrecerle Inventario.
