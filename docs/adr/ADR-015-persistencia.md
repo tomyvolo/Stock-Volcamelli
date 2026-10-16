@@ -24,19 +24,19 @@ De cada producto en cada sucursal guardamos dos números: la cantidad total y la
 Las tres operaciones de una transferencia son transacciones de esta base:
 
 - **Reservar.** Lee la fila del origen con `SELECT ... FOR UPDATE`. Si el disponible alcanza, suma a lo reservado y crea la reserva, identificada por el id de la transferencia, en estado `ACTIVA`.
-- **Confirmar** (cuando Rumbo acepta). En una sola transacción resta la cantidad del total y de lo reservado en el origen, la suma al total del destino (si el destino no tenía fila, la crea), pasa la reserva a `CONFIRMADA` y registra un movimiento de salida y uno de entrada.
-- **Liberar** (cuando Rumbo rechaza o la reserva falló). Resta de lo reservado en el origen y pasa la reserva a `LIBERADA`. Si la reserva todavía no existía, la crea directamente como `LIBERADA`, así un pedido de reserva que llega tarde se rechaza.
+- **Confirmar** (cuando el traslado se completa). En una sola transacción resta la cantidad del total y de lo reservado en el origen, la suma al total del destino (si el destino no tenía fila, la crea), pasa la reserva a `CONFIRMADA` y registra un movimiento de salida y uno de entrada.
+- **Liberar** (cuando el traslado se rechaza, se cancela o no se realiza, o cuando la reserva falló). Resta de lo reservado en el origen y pasa la reserva a `LIBERADA`. Si la reserva todavía no existía, la crea directamente como `LIBERADA`, así un pedido de reserva que llega tarde se rechaza.
 
 Bloqueamos con `FOR UPDATE` en la base y no con locks en memoria, porque hay dos instancias de Inventario y un lock en memoria solo protege a una. Los ajustes manuales siguen la misma regla: una salida no puede bajar el total por debajo de lo reservado.
 
 En esta misma base van dos tablas más: la de eventos ya procesados, para no confirmar ni liberar dos veces la misma reserva ([ADR-016](ADR-016-comunicacion-entre-servicios.md)), y la de eventos a publicar (outbox), para avisarle al buscador los cambios de productos y stock (ADR de D6).
 
 ### Transferencias
-Cada transferencia es un documento con lo que se pidió, su estado actual, la lista de estados por los que pasó, el id que le dio Rumbo, el motivo si se rechazó y los eventos pendientes de publicar. Un cambio de estado y su evento se guardan en el mismo documento, y en MongoDB escribir un documento es atómico, así que no se puede guardar uno sin el otro.
+Cada transferencia es un documento con lo que se pidió (incluida la hora de llegada deseada y las observaciones, si las hay), su estado actual, la lista de estados por los que pasó, el id que le dio Rumbo, el horario que propuso o comprometió Rumbo, la demora informada, el motivo si se rechazó o se canceló y los eventos pendientes de publicar. Un cambio de estado y su evento se guardan en el mismo documento, y en MongoDB escribir un documento es atómico, así que no se puede guardar uno sin el otro.
 
 Las consultas son tres: por id, por estado (los procesos de fondo buscan las que todavía no se mandaron a Rumbo o esperan respuesta) y por sucursal y fecha (las pantallas del operador). Para eso ponemos índices en `estado` y en `sucursal_origen` + `fecha`.
 
-Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en tres tablas (transferencia, historial de estados y eventos pendientes) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una contrapropuesta trae un horario. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
+Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en tres tablas (transferencia, historial de estados y eventos pendientes) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una contrapropuesta trae un horario y su vencimiento, un traslado en curso puede traer una demora. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
 
 ## Alternativas que descartamos
 - **Seguir con PostgreSQL.** Funcionaba igual, pero con las herramientas que usamos en Go nos resulta más fácil trabajar con MySQL.
@@ -44,4 +44,5 @@ Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y 
 ## Consecuencias
 - Hay que levantar cuatro bases (tres MySQL y un MongoDB) y configurar cada una.
 - Una transferencia queda guardada en Transferencias y el stock que mueve queda en Inventario, en bases distintas. Por eso no podemos confirmar las dos cosas juntas con una transacción: Transferencias avisa con un evento e Inventario confirma o libera por su cuenta.
+- Las reservas pueden durar días, mientras el traslado no termina.
 - Las reservas y los eventos procesados se guardan siempre, así que esas tablas crecen con el tiempo.

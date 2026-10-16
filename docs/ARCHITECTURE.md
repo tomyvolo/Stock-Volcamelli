@@ -72,18 +72,18 @@ Guarda las sucursales con su nombre y dirección. La dirección hace falta porqu
 ### Inventario
 Es el servicio que publicamos. Guarda los productos, el stock de cada producto en cada sucursal y los movimientos (cada cambio de stock queda registrado, con su motivo).
 
-Del stock guarda dos números: el total y lo reservado. El **disponible** es la diferencia, y es el que mostramos y el que se usa para decidir si una transferencia se puede hacer. Las unidades reservadas siguen estando en la sucursal, pero ya están comprometidas en una transferencia que espera la respuesta de Rumbo.
+Del stock guarda dos números: el total y lo reservado. El **disponible** es la diferencia, y es el que mostramos y el que se usa para decidir si una transferencia se puede hacer. Las unidades reservadas siguen estando en la sucursal, pero ya están comprometidas en una transferencia que todavía no llegó a destino.
 
 Tiene tres tipos de operaciones:
 
 - **Consultas** del catálogo y del stock, que usan nuestro frontend y el otro grupo.
 - **Ajustes manuales** de stock, que hace un ADMIN, por ejemplo cuando llega mercadería o hay una rotura.
-- **Reservas**, que solo usa Transferencias: reservar unidades en el origen, confirmarlas cuando Rumbo acepta (se mueven al destino) y liberarlas cuando Rumbo rechaza.
+- **Reservas**, que solo usa Transferencias: reservar unidades en el origen, confirmarlas cuando el traslado llega (se mueven al destino) y liberarlas si el traslado se rechaza, se cancela o no se realiza.
 
 El stock nunca puede quedar negativo, y eso lo controlan tanto el código como la base.
 
 ### Transferencias
-Guarda cada transferencia con su estado y su historial. Es el único servicio que habla con Rumbo. El flujo completo está en la sección 7.
+Guarda cada transferencia con su estado y su historial. Es el único servicio que habla con Rumbo: le pide los traslados, sigue cada uno hasta que termina y le reenvía las acciones del operador (responder un horario propuesto o cancelar). El flujo completo está en la sección 7.
 
 ## 5. Arquitectura interna de cada servicio
 
@@ -98,7 +98,7 @@ En capas, cada servicio se divide en handlers (reciben el HTTP), servicios (la l
 
 En Transferencias, la lógica de la transferencia (los estados y cuándo se confirma o se libera) queda en el centro y no conoce a nadie de afuera. Lo externo se conecta con adaptadores: uno para Rumbo, uno para Inventario, uno para Sucursales, uno para MongoDB y uno para RabbitMQ. Así, si Rumbo cambia su contrato, solo se toca su adaptador. Además, en los tests podemos reemplazar a Rumbo por uno falso.
 
-La decisión completa va en el ADR de D2.
+La decisión completa, con la estructura de carpetas de cada servicio, está en [ADR-002](adr/ADR-002-arquitectura-interna.md).
 
 ## 6. Datos y comunicación
 
@@ -111,30 +111,36 @@ Las comunicaciones entre servicios son:
 | Transferencias | Sucursales | HTTP | Traer nombre y dirección de origen y destino |
 | Transferencias | Inventario | HTTP, por NGINX | Reservar las unidades y, si falló, liberar |
 | Inventario | Sucursales | HTTP | Validar la sucursal en un ajuste |
-| Transferencias | Inventario | Eventos `TrasladoAceptado` y `TrasladoRechazado` (RabbitMQ) | Confirmar o liberar la reserva |
-| Transferencias | Rumbo | HTTP, en segundo plano | Pedir el traslado y ver si lo acepta |
+| Transferencias | Inventario | Eventos `TrasladoCompletado` y `TrasladoCancelado` (RabbitMQ) | Confirmar o liberar la reserva |
+| Transferencias | Rumbo | HTTP, en segundo plano | Pedir el traslado, seguirlo, responder horarios y cancelar |
 
 Todas las llamadas HTTP internas tienen un timeout de 2 segundos. Los eventos se publican con outbox. Inventario los procesa una sola vez aunque lleguen repetidos y, si un mensaje falla 3 veces, va a una cola de errores. El detalle está en [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md).
 
 ## 7. Flujo principal: transferencia entre sucursales
 
-Cuando el operador crea la transferencia, las unidades quedan reservadas en el origen. Se mueven al destino recién cuando Rumbo acepta el traslado. Si Rumbo rechaza, la reserva se libera y el origen vuelve a tenerlas disponibles.
+Cuando el operador crea la transferencia, las unidades quedan reservadas en el origen. Pasan al destino recién cuando Rumbo informa que el traslado llegó. Si el traslado se rechaza, se cancela o no se realiza, la reserva se libera y el origen vuelve a tenerlas disponibles.
 
-1. El operador elige producto, cantidad, sucursal de origen y de destino, y la crea.
+1. El operador elige producto, cantidad, sucursal de origen y de destino. Si quiere, indica a qué hora quiere que llegue, con cuánta flexibilidad, y observaciones para el retiro o la entrega.
 2. Transferencias le pide a Sucursales el nombre y la dirección de las dos sucursales.
 3. Transferencias le pide a Inventario que reserve las unidades en el origen. Si no hay stock disponible suficiente, Inventario lo rechaza.
 4. El operador ve el resultado enseguida: la transferencia reservada o el motivo por el que no se pudo.
-5. En segundo plano, Transferencias le pide el traslado a Rumbo, sin indicar horario.
-6. Cada 60 segundos, Transferencias le consulta a Rumbo qué cambió. Si Rumbo propone un horario, lo acepta automáticamente: para nosotros el horario no importa.
-7. Si Rumbo acepta, Transferencias publica `TrasladoAceptado` e Inventario mueve el stock: resta en el origen y suma en el destino. Si Rumbo rechaza, publica `TrasladoRechazado` e Inventario libera la reserva.
+5. En segundo plano, Transferencias le pide el traslado a Rumbo.
+6. Cada 60 segundos, Transferencias le consulta a Rumbo qué cambió:
+   - si Rumbo propone otro horario y el operador no había pedido hora, lo aceptamos solos; si había pedido una, la transferencia espera a que el operador acepte o rechace la propuesta;
+   - si Rumbo acepta, la transferencia queda programada con la hora comprometida;
+   - mientras el camión viaja, mostramos que está en curso y, si hay, la demora.
+7. Cuando el traslado llega, Transferencias publica `TrasladoCompletado` e Inventario pasa el stock: resta en el origen y suma en el destino. Si el traslado se rechaza, se cancela o no se realiza, publica `TrasladoCancelado` e Inventario libera la reserva.
+
+Mientras el traslado no esté en curso, el operador puede cancelar la transferencia. Si falta poco para la llegada, Rumbo tiene que aprobar la cancelación.
 
 Un ejemplo con 4 unidades, de una sucursal con 10 a otra con 2:
 
 | Momento | Origen: total / reservado / disponible | Destino |
 |---|---|---|
 | Se crea la transferencia | 10 / 4 / 6 | 2 |
-| Si Rumbo acepta | 6 / 0 / 6 | 6 |
-| Si Rumbo rechaza | 10 / 0 / 10 | 2 |
+| Mientras el traslado está programado o en curso | 10 / 4 / 6 | 2 |
+| Si el traslado llega | 6 / 0 / 6 | 6 |
+| Si se rechaza, se cancela o no se realiza | 10 / 0 / 10 | 2 |
 
 Los estados de una transferencia son:
 
@@ -142,23 +148,28 @@ Los estados de una transferencia son:
 |---|---|
 | `SIN_STOCK` | El origen no tenía stock disponible suficiente. No se reservó nada |
 | `FALLIDA` | Inventario no respondió a tiempo. Si llegó a reservar, la reserva se libera |
-| `RESERVADA` | Las unidades están reservadas y esperamos la respuesta de Rumbo |
-| `CONFIRMADA` | Rumbo aceptó. Inventario mueve el stock al destino al procesar el evento |
-| `RECHAZADA` | Rumbo rechazó el traslado o no pudimos pedírselo en 24 horas. La reserva se liberó |
-
-Una vez que Rumbo acepta, no seguimos el viaje del camión: para el inventario, la mercadería ya está en el destino.
+| `RESERVADA` | Las unidades están reservadas y esperamos que Rumbo revise el pedido |
+| `ESPERANDO_CONFIRMACION` | El operador había pedido una hora, Rumbo propuso otra y el operador tiene 24 horas para aceptarla o rechazarla |
+| `PROGRAMADA` | Rumbo aceptó y hay una hora de llegada comprometida |
+| `EN_CURSO` | El camión está viajando |
+| `COMPLETADA` | El traslado llegó. Inventario pasa el stock al destino al procesar el evento |
+| `RECHAZADA` | Rumbo rechazó el traslado, el operador rechazó el horario o nadie lo respondió a tiempo. La reserva se liberó |
+| `CANCELACION_PENDIENTE` | El operador pidió cancelar con poca anticipación y Rumbo todavía no lo aprobó |
+| `CANCELADA` | La transferencia se canceló. La reserva se liberó |
+| `NO_REALIZADA` | Rumbo no pudo hacer el traslado o lo interrumpió. La reserva se liberó |
 
 ## 8. Integración con otros grupos
 
 **Lo que ofrecemos.** El otro grupo puede consultar el catálogo y el stock disponible de Inventario: listar productos, ver un producto, el stock de una sucursal y el stock de un producto en una sucursal. Entra por el gateway con la cuenta `INTEGRACION`. El contrato está en [contracts/README.md](contracts/README.md) y la decisión en [ADR-017](adr/ADR-017-contrato-propio.md).
 
-**Lo que usamos.** De Rumbo usamos solo cuatro operaciones de su contrato:
+**Lo que usamos.** De Rumbo usamos toda la funcionalidad de su contrato:
 - pedir el token;
-- pedir un traslado;
-- consultar qué cambió;
-- aceptar el horario que proponen.
+- pedir un traslado, con hora de llegada si el operador la eligió;
+- consultar qué cambió, tanto de la solicitud como del viaje;
+- responder el horario que proponen;
+- cancelar un traslado.
 
-Solo le habla Transferencias, siempre en segundo plano, así que si Rumbo no responde nadie se queda esperando. Cómo lo manejamos en detalle va en los ADRs de D9 y D10.
+Solo le habla Transferencias, siempre en segundo plano, así que si Rumbo no responde nadie se queda esperando. Cómo traducimos sus estados y qué hacemos con cada error está en [ADR-009](adr/ADR-009-consumo-de-rumbo.md).
 
 ## 9. Logs y métricas
 
@@ -180,6 +191,8 @@ Con qué herramienta juntamos y mostramos todo esto se decide en el ADR de D11.
 | Decisión | ADR vigente | Reemplazó a |
 |---|---|---|
 | D1 Límites de los servicios | [ADR-014](adr/ADR-014-limites-de-servicios.md) | [ADR-001](adr/ADR-001-limites-de-servicios.md) |
+| D2 Arquitectura interna | [ADR-002](adr/ADR-002-arquitectura-interna.md) | — |
 | D3 Persistencia | [ADR-015](adr/ADR-015-persistencia.md) | [ADR-003](adr/ADR-003-persistencia-inicial.md) |
 | D5 Comunicación entre servicios | [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md) | [ADR-005](adr/ADR-005-comunicacion-inicial.md) |
 | D8 Contrato propio | [ADR-017](adr/ADR-017-contrato-propio.md) | [ADR-008](adr/ADR-008-contrato-de-integracion.md) |
+| D9 Consumo de Rumbo | [ADR-009](adr/ADR-009-consumo-de-rumbo.md) | — |

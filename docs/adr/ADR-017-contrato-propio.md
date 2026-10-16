@@ -18,7 +18,7 @@ Publicamos solamente consultas de Inventario:
 
 Además, el contrato incluye el login (`POST /api/auth/login`), que es de Usuarios y hace falta para obtener el token.
 
-El stock que devolvemos (`quantity`) es el **disponible**: la cantidad total menos lo que está reservado para transferencias que esperan la respuesta de Rumbo. Es lo que el otro grupo realmente puede contar como existente en esa sucursal.
+El stock que devolvemos (`quantity`) es el **disponible**: la cantidad total menos lo que está reservado para transferencias que todavía no llegaron a destino. Es lo que el otro grupo realmente puede contar como existente en esa sucursal.
 
 El contrato está en [openapi.yaml](../contracts/openapi.yaml). Mientras Inventario no esté implementado, el otro grupo puede probar contra un mock que se levanta con Prism desde ese mismo archivo. Cuando Inventario esté desplegado en la nube, va a tener una URL pública.
 

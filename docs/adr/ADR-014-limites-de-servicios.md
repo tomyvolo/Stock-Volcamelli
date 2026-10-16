@@ -28,8 +28,8 @@ Las relaciones entre servicios son:
 
 - Transferencias consulta a Sucursales el nombre y la dirección de origen y destino, porque Rumbo los pide.
 - Transferencias le pide a Inventario que reserve las unidades en el origen. Si no hay stock disponible suficiente, Inventario lo rechaza.
-- Transferencias le pide el traslado a Rumbo y sigue si lo acepta o lo rechaza.
-- Si Rumbo acepta, Transferencias publica `TrasladoAceptado` e Inventario mueve el stock del origen al destino. Si Rumbo rechaza, publica `TrasladoRechazado` e Inventario libera la reserva.
+- Transferencias le pide el traslado a Rumbo y sigue la solicitud y el viaje hasta que terminan.
+- Cuando el traslado se completa, Transferencias publica `TrasladoCompletado` e Inventario pasa el stock del origen al destino. Si el traslado se rechaza, se cancela o no se realiza, publica `TrasladoCancelado` e Inventario libera la reserva.
 - Inventario consulta a Sucursales que la sucursal exista cuando un ADMIN hace un ajuste.
 
 Cómo se comunican lo explicamos en [ADR-016](ADR-016-comunicacion-entre-servicios.md).
@@ -37,11 +37,11 @@ Cómo se comunican lo explicamos en [ADR-016](ADR-016-comunicacion-entre-servici
 ## Alternativas que descartamos
 - **Dejar las transferencias dentro de Inventario, como en ADR-001.** Es lo que había y lo que queremos evitar: el servicio publicado dependería de Rumbo.
 - **Tener un servicio de Notificaciones aparte.** Era un servicio más para levantar y mantener, y no cubría ninguna funcionalidad que alguien necesitara.
-- **Mover el stock en el momento y devolverlo si Rumbo rechaza.** Fue lo primero que pensamos, porque la transferencia se veía hecha enseguida. El problema es que, mientras Rumbo decide, el destino puede vender esas unidades, y si después Rumbo rechaza no hay cómo devolverlas. Con la reserva eso no pasa: el destino recibe el stock recién cuando Rumbo acepta.
+- **Mover el stock en el momento y devolverlo si Rumbo rechaza.** Fue lo primero que pensamos, porque la transferencia se veía hecha enseguida. El problema es que, mientras el traslado no se hace, el destino puede vender esas unidades, y si después el traslado no se concreta no hay cómo devolverlas. Con la reserva eso no pasa: el destino recibe el stock recién cuando la mercadería llega.
 
 ## Consecuencias
 - Una transferencia pasa por dos servicios. La confirmación o la liberación llega por un evento, no por un rollback.
-- Mientras Rumbo decide, las unidades reservadas no se pueden usar en el origen, y el destino todavía no las tiene.
+- Mientras dura el traslado, que puede ser de varios días, las unidades reservadas no se pueden usar en el origen y el destino todavía no las tiene.
 - Ya no hay notificaciones de stock bajo. El stock bajo se ve como un filtro en la búsqueda del catálogo.
 - Sucursales tiene que guardar la dirección de cada sucursal, porque sin eso no podemos pedirle traslados a Rumbo.
 - Si Rumbo no está disponible, el catálogo y el stock que publicamos siguen funcionando. Las transferencias nuevas quedan reservadas esperando.

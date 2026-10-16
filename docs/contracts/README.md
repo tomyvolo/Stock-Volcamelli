@@ -13,7 +13,7 @@ Le ofrecemos al otro grupo consultar nuestro catálogo de productos y el stock d
 | `GET /api/branches/{branchId}/products/{productId}/stock` | Ver el stock disponible de un producto en una sucursal |
 
 Algunas aclaraciones:
-- El stock que devolvemos (`quantity`) es el **disponible**: el total menos las unidades reservadas para transferencias que todavía esperan la respuesta del transporte. Por ejemplo, si una sucursal tiene 46 unidades y 4 están reservadas, devolvemos 42.
+- El stock que devolvemos (`quantity`) es el **disponible**: el total menos las unidades reservadas para transferencias a otras sucursales que todavía no llegaron a destino. Por ejemplo, si una sucursal tiene 46 unidades y 4 están reservadas, devolvemos 42.
 - Si una sucursal no tiene stock cargado, la consulta de su stock devuelve una lista vacía.
 - Si un producto existe pero no tiene stock en esa sucursal, la cantidad viene en 0.
 - El stock es el del momento de la consulta y puede cambiar enseguida.

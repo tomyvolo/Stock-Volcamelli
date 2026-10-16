@@ -10,10 +10,11 @@ En una empresa con varias sucursales, la misma mercadería está repartida y se 
 
 El flujo principal es la transferencia entre sucursales:
 
-1. Un operador elige producto, cantidad, sucursal de origen y sucursal de destino.
+1. Un operador elige producto, cantidad, sucursal de origen y sucursal de destino, y si quiere, a qué hora quiere que llegue.
 2. Las unidades quedan reservadas en el origen: siguen ahí, pero nadie más las puede usar. Si el origen no tiene suficiente, la transferencia se rechaza.
-3. En segundo plano le pedimos el traslado a Rumbo, el servicio de transporte de otro grupo.
-4. Si Rumbo acepta, el stock pasa del origen al destino. Si rechaza, la reserva se libera y las unidades vuelven a estar disponibles en el origen.
+3. En segundo plano le pedimos el traslado a Rumbo, el servicio de transporte de otro grupo. Si el operador pidió una hora y Rumbo propone otra, el operador la acepta o la rechaza. Si no pidió ninguna, aceptamos la que proponga Rumbo.
+4. Seguimos el traslado hasta que llega: programado, en curso, con demora si la hay.
+5. Cuando la mercadería llega, el stock pasa del origen al destino. Si el traslado se rechaza, se cancela o no se realiza, la reserva se libera y las unidades vuelven a estar disponibles en el origen.
 
 ## Cómo está armado
 

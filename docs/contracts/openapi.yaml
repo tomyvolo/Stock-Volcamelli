@@ -396,7 +396,7 @@ components:
           minimum: 0
           description: >-
             Stock disponible en la sucursal al momento de la consulta: el total menos lo que
-            está reservado para transferencias que todavía esperan la respuesta de Rumbo.
+            está reservado para transferencias a otras sucursales que todavía no llegaron a destino.
             Nunca es negativo.
     ApiError:
       type: object

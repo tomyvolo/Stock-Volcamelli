@@ -36,11 +36,11 @@ flowchart TB
     TS -->|"Nombre y dirección"| BS
     TS -->|"Reservar"| N
     I -->|"Validar sucursal en ajustes"| BS
-    TS -->|"TrasladoAceptado / TrasladoRechazado"| Q
+    TS -->|"TrasladoCompletado / TrasladoCancelado"| Q
     Q --> I
     I -->|"Búsqueda del catálogo"| S
     I -->|"Caché"| M
-    TS -->|"Pedir traslado y consultar estado"| R
+    TS -->|"Pedir, seguir, responder horario y cancelar"| R
 ```
 
 ## Qué es cada cosa
