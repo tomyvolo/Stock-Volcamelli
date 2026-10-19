@@ -54,7 +54,6 @@ Para comparar, corremos la misma prueba de carga dos veces, una con `CACHE_ENABL
 ## Alternativas que descartamos
 - **Cachear el stock de cada sucursal.** Es la consulta más pesada, pero el stock cambia con cada reserva, traslado y ajuste, así que la caché mostraría un disponible viejo casi siempre.
 - **Cachear el catálogo de productos.** Casi no cambia, pero traer un producto por id ya es muy rápido en MySQL. La caché casi no se notaría.
-- **Caché local en cada servicio (ccache).** Es más rápida porque no pasa por la red, pero se pierde cada vez que se reinicia el servicio, y si algún día corremos dos instancias, cada una tendría su propia copia. Con Memcached la caché sobrevive a los reinicios y todas las instancias leen las mismas claves.
 
 ## Consecuencias
 - Un cambio en una sucursal o en un usuario tarda hasta 60 segundos en verse. Para estos datos (una dirección, un usuario nuevo) lo aceptamos.

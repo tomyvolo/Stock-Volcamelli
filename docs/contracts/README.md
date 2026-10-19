@@ -9,7 +9,7 @@ Le ofrecemos al otro grupo consultar nuestro catálogo de productos y el stock d
 | `POST /api/auth/login` | Obtener el token |
 | `GET /api/products?page=1&size=20` | Listar productos, de a una página |
 | `GET /api/products/{productId}` | Ver un producto |
-| `GET /api/branches/{branchId}/stock` | Ver el stock disponible de todos los productos de una sucursal |
+| `GET /api/branches/{branchId}/stock` | Ver el stock disponible de todos los productos de una sucursal. Con `?lowStock=true`, solo los que tienen 5 unidades o menos |
 | `GET /api/branches/{branchId}/products/{productId}/stock` | Ver el stock disponible de un producto en una sucursal |
 
 Algunas aclaraciones:
@@ -41,7 +41,6 @@ Todos los errores tienen el mismo formato:
 | 401 | `INVALID_CREDENTIALS` | Email o contraseña incorrectos en el login | Revisar los datos de la cuenta |
 | 403 | `FORBIDDEN` | La cuenta no tiene permiso para esa operación | Usar solo las operaciones de este contrato |
 | 404 | `PRODUCT_NOT_FOUND` | El producto no existe | Verificar el id |
-| 429 | `RATE_LIMITED` | Se pasaron del límite de pedidos por minuto | Esperar los segundos que indica el header `Retry-After` |
 | 500 | `INTERNAL_ERROR` | Error de nuestro lado | Probar de nuevo más tarde |
 | 503 | `SERVICE_UNAVAILABLE` | Inventario no está disponible en ese momento | Probar de nuevo más tarde |
 
@@ -50,7 +49,7 @@ Todos los errores tienen el mismo formato:
 Login:
 
 ```bash
-curl -X POST http://localhost:4010/api/auth/login \
+curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email": "integracion@grupo-consumidor.com", "password": "una-clave-de-ejemplo"}'
 ```
@@ -58,14 +57,14 @@ curl -X POST http://localhost:4010/api/auth/login \
 Listar productos:
 
 ```bash
-curl "http://localhost:4010/api/products?page=1&size=20" \
+curl "http://localhost:8080/api/products?page=1&size=20" \
   -H "Authorization: Bearer <token>"
 ```
 
 Stock de un producto en una sucursal:
 
 ```bash
-curl http://localhost:4010/api/branches/3/products/15/stock \
+curl http://localhost:8080/api/branches/3/products/15/stock \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -75,20 +74,9 @@ Respuesta:
 { "branchId": 3, "productId": 15, "productName": "Harina 000", "quantity": 42 }
 ```
 
-## Probar con el mock
+## Dónde probarlo
 
-Mientras Inventario no esté implementado, se puede probar contra un mock que se arma solo a partir de `openapi.yaml`. Hace falta Docker. Desde la raíz del repositorio:
-
-```bash
-docker run --rm -p 4010:4010 -v "${PWD}/docs/contracts:/contrato" stoplight/prism:5 mock -h 0.0.0.0 /contrato/openapi.yaml
-```
-
-El mock queda en `http://localhost:4010`:
-- Devuelve las respuestas de ejemplo del contrato. No tiene datos reales ni guarda nada.
-- Valida los pedidos: si falta un parámetro obligatorio o tiene un valor inválido, responde `400`.
-- Pide el header `Authorization`. Sin el header responde `401`, pero acepta cualquier token.
-
-Para ver un error en particular se usa el header `Prefer`, por ejemplo `Prefer: code=404`.
+Los ejemplos usan `http://localhost:8080`, que es el gateway cuando el sistema se levanta con `docker compose up`. Cuando Inventario esté desplegado, agregamos acá su URL pública.
 
 ## Cambios en el contrato
 
