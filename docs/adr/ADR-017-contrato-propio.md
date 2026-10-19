@@ -13,14 +13,14 @@ Publicamos solamente consultas de Inventario:
 |---|---|
 | Listar productos (paginado) | `GET /api/products` |
 | Ver un producto | `GET /api/products/{productId}` |
-| Ver el stock de una sucursal | `GET /api/branches/{branchId}/stock` |
+| Ver el stock de una sucursal (con `?lowStock=true`, solo los productos con 5 unidades o menos) | `GET /api/branches/{branchId}/stock` |
 | Ver el stock de un producto en una sucursal | `GET /api/branches/{branchId}/products/{productId}/stock` |
 
 Además, el contrato incluye el login (`POST /api/auth/login`), que es de Usuarios y hace falta para obtener el token.
 
 El stock que devolvemos (`quantity`) es el **disponible**: la cantidad total menos lo que está reservado para transferencias que todavía no llegaron a destino. Es lo que el otro grupo realmente puede contar como existente en esa sucursal.
 
-El contrato está en [openapi.yaml](../contracts/openapi.yaml). Mientras Inventario no esté implementado, el otro grupo puede probar contra un mock que se levanta con Prism desde ese mismo archivo. Cuando Inventario esté desplegado en la nube, va a tener una URL pública.
+El contrato está en [openapi.yaml](../contracts/openapi.yaml). Cuando Inventario esté desplegado en la nube, va a tener una URL pública.
 
 ### Autenticación
 Usamos el mismo JWT que usan nuestros usuarios. Al grupo consumidor le creamos una cuenta en Usuarios con el rol `INTEGRACION`, que solo puede hacer estas consultas. Con esa cuenta hace login, recibe un token que dura 1 hora y lo manda en `Authorization: Bearer <token>` en cada pedido. El gateway valida el token igual que con cualquier usuario. Cuando vence, vuelven a hacer login.
@@ -34,7 +34,6 @@ Todos los errores devuelven el mismo formato, con un código y un mensaje:
 | `401` | Falta el token, no es válido o venció; o el usuario y la contraseña del login son incorrectos |
 | `403` | El token es válido, pero el rol no tiene permiso para esa operación |
 | `404` | El producto no existe |
-| `429` | Se pasaron del límite de pedidos por minuto que pone el gateway |
 | `500` | Error nuestro |
 | `503` | Inventario no está disponible en ese momento |
 

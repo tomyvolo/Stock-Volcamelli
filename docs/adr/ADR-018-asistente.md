@@ -47,9 +47,6 @@ El historial lo guarda el frontend y lo manda en cada mensaje (los últimos 20).
 - Las herramientas del servidor MCP se prueban como cualquier código, sin IA: se llama a la herramienta y se compara el resultado.
 - El ciclo del Asistente se prueba con un modelo falso que responde pedidos de herramientas armados de antemano, para comprobar que ejecuta lo que corresponde, que respeta el límite de vueltas y que nunca ejecuta `crear_transferencia` sin confirmación.
 
-## Alternativas que descartamos
-- **Solo el servidor MCP, para usarlo desde un cliente externo** (Claude Desktop o una terminal). Era la mitad del trabajo, pero el usuario trabaja en nuestro frontend y no va a instalar otro programa. Igual el servidor MCP queda disponible: cualquier cliente MCP lo puede usar con un token válido.
-
 ## Consecuencias
 - Son dos servicios más (Asistente y servidor MCP), una ruta más en el gateway (`/api/assistant/*`) y una dependencia externa: el proveedor del modelo.
 - Si el modelo no está disponible, el chat responde que el asistente no está disponible. El resto del sistema no se entera.

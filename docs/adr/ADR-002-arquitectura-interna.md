@@ -86,4 +86,4 @@ Tampoco siguen estos estilos. No tienen base ni reglas de negocio: el Asistente 
 - En Inventario, tanto los pedidos HTTP como los eventos de RabbitMQ pasan por la misma capa de servicios. Así, las reglas (no reservar más de lo disponible, no liberar una reserva confirmada) se aplican igual sin importar por dónde entre la operación.
 - Hay dos formas de organizar el código en el mismo repositorio, y todo el equipo tiene que conocer las dos.
 - Transferencias tiene más archivos e interfaces que los demás. A cambio, el centro se prueba con adaptadores falsos, por ejemplo un Rumbo falso que acepta o rechaza, sin red ni base.
-- Que nadie se saltee capas (un controller que use un repositorio directo, por ejemplo) no lo controla el compilador: lo revisamos en los pull requests.
+- Que nadie se saltee capas (un controller que use un repositorio directo, por ejemplo) no lo controla el compilador: lo revisamos entre nosotros antes de subir los cambios.

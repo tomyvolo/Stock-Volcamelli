@@ -6,8 +6,8 @@ info:
     Consultas del catálogo de productos y del stock disponible por sucursal de Stock Volcamelli.
     Todas las operaciones son de lectura y requieren un token que se obtiene con el login.
 servers:
-  - url: http://localhost:4010
-    description: Mock local de Prism
+  - url: http://localhost:8080
+    description: Gateway levantado con Docker Compose
 security:
   - bearerAuth: []
 tags:
@@ -57,8 +57,6 @@ paths:
               example:
                 code: INVALID_CREDENTIALS
                 message: El email o la contraseña son incorrectos.
-        '429':
-          $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -97,8 +95,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -130,8 +126,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ProductNotFound'
-        '429':
-          $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -139,6 +133,13 @@ paths:
   /api/branches/{branchId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: lowStock
+        in: query
+        required: false
+        description: Si es true, devuelve solo los productos con 5 unidades disponibles o menos.
+        schema:
+          type: boolean
+          default: false
     get:
       tags: [Stock]
       operationId: listBranchStock
@@ -178,8 +179,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -213,8 +212,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ProductNotFound'
-        '429':
-          $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -298,21 +295,6 @@ components:
           example:
             code: PRODUCT_NOT_FOUND
             message: No existe el producto 15.
-    RateLimited:
-      description: Se pasaron del límite de pedidos por minuto.
-      headers:
-        Retry-After:
-          description: Cuántos segundos esperar antes de volver a intentar.
-          schema:
-            type: integer
-            minimum: 1
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: RATE_LIMITED
-            message: Hiciste demasiados pedidos. Esperá un momento y volvé a intentar.
     InternalError:
       description: Error de nuestro lado.
       content:

@@ -11,7 +11,7 @@ Cada servicio tiene su propio servidor de base de datos y es el único que lo us
 
 | Servicio | Base | Qué guarda y cómo se consulta |
 |---|---|---|
-| Usuarios | MySQL | Usuarios con email único. Se buscan por id o por email al hacer login |
+| Usuarios | MySQL | Usuarios con email único, rol y el id de su sucursal. Se buscan por id, por email al hacer login y por sucursal para la sección de usuarios |
 | Sucursales | MySQL | Sucursales con nombre y dirección. Se buscan por id |
 | Inventario | MySQL | Productos, stock por sucursal, reservas y movimientos |
 | Transferencias | MongoDB | Una transferencia por documento, con su historial de estados |
@@ -29,14 +29,14 @@ Las tres operaciones de una transferencia son transacciones de esta base:
 
 Bloqueamos con `FOR UPDATE` en la base y no con locks en memoria, porque hay dos instancias de Inventario y un lock en memoria solo protege a una. Los ajustes manuales siguen la misma regla: una salida no puede bajar el total por debajo de lo reservado.
 
-En esta misma base van dos tablas más: la de eventos ya procesados, para no confirmar ni liberar dos veces la misma reserva ([ADR-016](ADR-016-comunicacion-entre-servicios.md)), y la de eventos a publicar (outbox), para avisarle al buscador los cambios de productos y stock (ADR de D6).
+En esta misma base va una tabla más: la de eventos ya procesados, para no confirmar ni liberar dos veces la misma reserva ([ADR-016](ADR-016-comunicacion-entre-servicios.md)).
 
 ### Transferencias
-Cada transferencia es un documento con lo que se pidió (incluida la hora de llegada deseada y las observaciones, si las hay), su estado actual, la lista de estados por los que pasó, el id que le dio Rumbo, el horario que propuso o comprometió Rumbo, la demora informada, el motivo si se rechazó o se canceló y los eventos pendientes de publicar. Un cambio de estado y su evento se guardan en el mismo documento, y en MongoDB escribir un documento es atómico, así que no se puede guardar uno sin el otro.
+Cada transferencia es un documento con lo que se pidió (incluida la hora de llegada deseada y las observaciones, si las hay), su estado actual, la lista de estados por los que pasó, el id que le dio Rumbo, el horario que propuso o comprometió Rumbo, la demora informada y el motivo si se rechazó o se canceló. En MongoDB escribir un documento es atómico, así que un cambio de estado y su historial se guardan juntos.
 
-Las consultas son tres: por id, por estado (los procesos de fondo buscan las que todavía no se mandaron a Rumbo o esperan respuesta) y por sucursal y fecha (las pantallas del operador). Para eso ponemos índices en `estado` y en `sucursal_origen` + `fecha`.
+Las consultas son tres: por id, por estado (los procesos de fondo buscan las que todavía no se mandaron a Rumbo o esperan respuesta) y por sucursal y fecha (las pantallas de los usuarios). Para eso ponemos índices en `estado` y en `sucursal_origen` + `fecha`.
 
-Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en tres tablas (transferencia, historial de estados y eventos pendientes) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una contrapropuesta trae un horario y su vencimiento, un traslado en curso puede traer una demora. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
+Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en dos tablas (transferencia e historial de estados) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una contrapropuesta trae un horario y su vencimiento, un traslado en curso puede traer una demora. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
 
 ## Alternativas que descartamos
 - **Seguir con PostgreSQL.** Funcionaba igual, pero con las herramientas que usamos en Go nos resulta más fácil trabajar con MySQL.

@@ -33,9 +33,6 @@ Para esta ruta el gateway no corta la conexión por timeout y reenvía cada mens
 ### Quién recibe qué
 Todos los usuarios conectados, sea cual sea su rol, reciben todos los eventos, y el frontend filtra lo que muestra. `INTEGRACION` no puede usar `/api/events`.
 
-## Alternativas que descartamos
-- **WebSocket.** Permite mandar mensajes en las dos direcciones, pero nosotros solo necesitamos del servidor al navegador. SSE es más simple: es HTTP común, pasa por el gateway sin cambios de protocolo y la reconexión es solo volver a hacer el pedido.
-
 ## Consecuencias
 - Es un servicio más y una ruta más en el gateway, que además tiene que soportar conexiones largas.
 - Tiempo Real corre en una sola instancia, porque las conexiones abiertas están en su memoria. Si se cae, las pantallas dejan de actualizarse solas, pero todo sigue andando: el usuario recarga como antes.

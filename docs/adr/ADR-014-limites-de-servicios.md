@@ -15,7 +15,7 @@ Quedan cuatro servicios detrás de un API Gateway:
 
 | Servicio | Qué hace | Datos de los que es dueño |
 |---|---|---|
-| Usuarios | Usuarios, login y roles (`ADMIN`, `OPERATOR` e `INTEGRACION`) | Usuarios |
+| Usuarios | Usuarios con su rol y su sucursal, y login | Usuarios |
 | Sucursales | Alta, modificación y consulta de sucursales | Sucursales, con su dirección |
 | Inventario | Catálogo de productos, stock por sucursal, reservas, movimientos y ajustes manuales. Es la capacidad que publicamos | Productos, stock, reservas y movimientos |
 | Transferencias | Registra las transferencias, le pide el traslado a Rumbo y decide si se confirman o se liberan | Transferencias y su estado |
@@ -30,7 +30,8 @@ Las relaciones entre servicios son:
 - Transferencias le pide a Inventario que reserve las unidades en el origen. Si no hay stock disponible suficiente, Inventario lo rechaza.
 - Transferencias le pide el traslado a Rumbo y sigue la solicitud y el viaje hasta que terminan.
 - Cuando el traslado se completa, Transferencias publica `TrasladoCompletado` e Inventario pasa el stock del origen al destino. Si el traslado se rechaza, se cancela o no se realiza, publica `TrasladoCancelado` e Inventario libera la reserva.
-- Inventario consulta a Sucursales que la sucursal exista cuando un ADMIN hace un ajuste.
+- Inventario consulta a Sucursales que la sucursal exista cuando se hace un ajuste.
+- Usuarios guarda en qué sucursal trabaja cada usuario, pero solo su id: el nombre y la dirección de la sucursal son de Sucursales.
 
 Cómo se comunican lo explicamos en [ADR-016](ADR-016-comunicacion-entre-servicios.md).
 
@@ -42,6 +43,6 @@ Cómo se comunican lo explicamos en [ADR-016](ADR-016-comunicacion-entre-servici
 ## Consecuencias
 - Una transferencia pasa por dos servicios. La confirmación o la liberación llega por un evento, no por un rollback.
 - Mientras dura el traslado, que puede ser de varios días, las unidades reservadas no se pueden usar en el origen y el destino todavía no las tiene.
-- Ya no hay notificaciones de stock bajo. El stock bajo se ve como un filtro en la búsqueda del catálogo.
+- Ya no hay notificaciones de stock bajo. El stock bajo se ve con un filtro en la consulta de stock de cada sucursal.
 - Sucursales tiene que guardar la dirección de cada sucursal, porque sin eso no podemos pedirle traslados a Rumbo.
 - Si Rumbo no está disponible, el catálogo y el stock que publicamos siguen funcionando. Las transferencias nuevas quedan reservadas esperando.
