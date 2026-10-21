@@ -1,0 +1,187 @@
+# Una sola orden, `docker compose up --build`, levanta todo el sistema desde la raíz del repositorio.
+# Las claves de este archivo son solo para correrlo en local.
+name: stock-volcamelli
+
+services:
+  gateway:
+    build: ./gateway
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      # Cada servicio usa este usuario para insertar sus logs en la tabla app_logs.
+      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
+      # Tiene que ser la misma clave que usa Usuarios para firmar los tokens.
+      JWT_SECRET: ${JWT_SECRET:-solo-para-desarrollo-local}
+      USUARIOS_URL: http://usuarios:8081
+      # Inventario se consulta siempre a través de NGINX.
+      INVENTARIO_URL: http://nginx
+    depends_on:
+      mysql-logs:
+        condition: service_healthy
+      usuarios:
+        condition: service_started
+      nginx:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  usuarios:
+    build: ./servicios/usuarios
+    environment:
+      PORT: "8081"
+      DB_DSN: usuarios:usuarios_local@tcp(mysql-usuarios:3306)/usuarios?parseTime=true
+      # Cada servicio usa este usuario para insertar sus logs en la tabla app_logs.
+      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
+      JWT_SECRET: ${JWT_SECRET:-solo-para-desarrollo-local}
+    depends_on:
+      mysql-usuarios:
+        condition: service_healthy
+      mysql-logs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Las dos instancias de Inventario usan el mismo Dockerfile, el mismo código y la misma base.
+  inventario1:
+    build: ./servicios/inventario
+    environment:
+      PORT: "8082"
+      DB_DSN: inventario:inventario_local@tcp(mysql-inventario:3306)/inventario?parseTime=true
+      # Cada servicio usa este usuario para insertar sus logs en la tabla app_logs.
+      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
+    depends_on:
+      mysql-inventario:
+        condition: service_healthy
+      mysql-logs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  inventario2:
+    build: ./servicios/inventario
+    environment:
+      PORT: "8082"
+      DB_DSN: inventario:inventario_local@tcp(mysql-inventario:3306)/inventario?parseTime=true
+      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
+    depends_on:
+      mysql-inventario:
+        condition: service_healthy
+      mysql-logs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # NGINX reparte los pedidos entre las dos instancias de Inventario. Desde afuera no se ve.
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - inventario1
+      - inventario2
+
+  # Un MySQL por servicio, y uno aparte solo para los logs.
+  mysql-usuarios:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root_local
+      MYSQL_DATABASE: usuarios
+      MYSQL_USER: usuarios
+      MYSQL_PASSWORD: usuarios_local
+    volumes:
+      - mysql_usuarios_data:/var/lib/mysql
+      - ./servicios/usuarios/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u usuarios -pusuarios_local usuarios -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+
+  mysql-inventario:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root_local
+      MYSQL_DATABASE: inventario
+      MYSQL_USER: inventario
+      MYSQL_PASSWORD: inventario_local
+    volumes:
+      - mysql_inventario_data:/var/lib/mysql
+      - ./servicios/inventario/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u inventario -pinventario_local inventario -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+
+  mysql-logs:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root_demo
+      MYSQL_DATABASE: observabilidad
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demo
+    volumes:
+      - mysql_logs_data:/var/lib/mysql
+      # Crea la tabla app_logs y el usuario de solo lectura de Grafana.
+      - ./observabilidad/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u demo -pdemo observabilidad -e 'SELECT 1 FROM app_logs LIMIT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observabilidad/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - gateway
+      - usuarios
+      - inventario1
+      - inventario2
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Clave del usuario de solo lectura grafana_reader.
+      GRAFANA_MYSQL_PASSWORD: grafana_demo
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observabilidad/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observabilidad/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+      mysql-logs:
+        condition: service_healthy
+
+volumes:
+  mysql_usuarios_data:
+  mysql_inventario_data:
+  mysql_logs_data:
+  prometheus_data:
+  grafana_data:
