@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/gin-gonic/gin v1.10.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/prometheus/client_golang v1.20.5
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.12
