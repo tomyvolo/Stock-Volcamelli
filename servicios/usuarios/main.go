@@ -8,8 +8,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"usuarios/controllers"
+	usersControllers "usuarios/controllers/users"
+	"usuarios/database"
 	"usuarios/logs"
 	"usuarios/observability"
+	usersRepo "usuarios/repositories/users"
+	usersServices "usuarios/services/users"
 )
 
 const stage = "usuarios"
@@ -22,9 +26,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("no se pudo conectar al MySQL de logs: %v", err)
 	}
+	db := database.ConnectDB()
 
-	// TODO(Juan): conectar GORM al MySQL de Usuarios con DB_DSN y armar
-	// repositories -> services -> controllers, como en el práctico.
+	// Inyección de dependencias: repositorio -> servicio -> controlador.
+	usersRepository := usersRepo.UsersMySQL{DB: db}
+	usersService := usersServices.UsersService{Repo: usersRepository}
+	usersController := usersControllers.UsersController{Service: usersService, Logs: logStore}
 
 	router.Use(gin.Recovery())
 	// Estas dos rutas quedan fuera del grupo medido para no contar las sondas.
@@ -34,12 +41,7 @@ func main() {
 	api := router.Group("/api")
 	api.Use(observability.RecordMetrics, observability.ReadTrackID)
 
-	// TODO(Juan): POST /api/auth/login
-	// - Busca el usuario por email y compara la contraseña con bcrypt (utils/hash.go de DSW).
-	// - Devuelve { "token": "...", "expiresIn": 3600 } con un JWT HS256 firmado con JWT_SECRET
-	//   que lleve sub (id), rol, sucursal y exp (1 hora). Como utils/jwt.go de DSW.
-	// - Si no coincide: 401 { "code": "INVALID_CREDENTIALS", "message": "..." }.
-	// - Log con logStore.Write(ctx.GetString("track_id"), stage, ...), sin escribir nunca la contraseña.
+	api.POST("/auth/login", usersController.Login)
 
 	port := os.Getenv("PORT")
 	if port == "" {
