@@ -1,0 +1,22 @@
+# Prometheus consulta el /metrics de cada servicio cada cinco segundos.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  # Cada job_name aparece como etiqueta "job" en las consultas de Grafana.
+  # Los nombres de los targets son los nombres de los servicios en docker-compose.yml.
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8080"]
+    metrics_path: /metrics
+
+  - job_name: usuarios
+    static_configs:
+      - targets: ["usuarios:8081"]
+    metrics_path: /metrics
+
+  # Las dos instancias van en el mismo job; Prometheus las distingue con la etiqueta "instance".
+  - job_name: inventario
+    static_configs:
+      - targets: ["inventario1:8082", "inventario2:8082"]
+    metrics_path: /metrics

@@ -1,0 +1,8 @@
+# Grafana lee los JSON de esta carpeta y crea el dashboard.
+apiVersion: 1
+providers:
+  - name: Stock Volcamelli
+    type: file
+    folder: Stock Volcamelli
+    options:
+      path: /var/lib/grafana/dashboards
