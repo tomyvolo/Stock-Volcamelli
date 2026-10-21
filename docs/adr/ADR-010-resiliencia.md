@@ -16,7 +16,7 @@ Ninguna llamada espera para siempre:
 | Llamada | Timeout |
 |---|---|
 | Entre nuestros servicios (HTTP) | 2 segundos |
-| NGINX a Inventario | Los que trae NGINX; corta antes el timeout de 2 segundos de quien llama |
+| NGINX a Inventario | 1 segundo para conectar con una instancia; si no conecta, prueba la otra. Para la respuesta, el que trae NGINX: corta antes el timeout de 2 segundos de quien llama |
 | Usuarios y Sucursales a Memcached | El que trae el cliente de Memcached para Go (500 ms) |
 | Inventario a Solr | 2 segundos |
 | Transferencias a Rumbo | 5 segundos |
@@ -63,5 +63,5 @@ Cuando algo responde `503`, el frontend muestra "no disponible por el momento" s
 ## Consecuencias
 - Con Rumbo caído, las transferencias se acumulan como `RESERVADA` y esas unidades no se pueden usar. Si pasa más de 24 horas, se rechazan y se liberan.
 - Cuando el circuit breaker está abierto, nos enteramos de los cambios de Rumbo con hasta 30 segundos más de atraso.
-- El gateway, NGINX y RabbitMQ son una sola instancia cada uno. Si se caen, se pierde una parte grande del sistema hasta que Docker los reinicia.
+- El gateway, NGINX y RabbitMQ son una sola instancia cada uno. Si se caen, se pierde una parte grande del sistema hasta que se vuelven a levantar.
 - Todos estos números son iniciales: los ajustamos con lo que veamos en las pruebas de carga y en las pruebas de fallas.

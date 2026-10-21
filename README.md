@@ -49,7 +49,44 @@ Todo el sistema se levanta con Docker, desde la raíz del repositorio:
 docker compose up --build -d
 ```
 
-El gateway queda en `http://localhost:8080`. Cuando Inventario esté desplegado, vamos a agregar acá su URL pública.
+La primera vez tarda un par de minutos, porque los MySQL cargan sus tablas y datos de prueba. Después queda:
+
+| Qué | Dónde |
+|---|---|
+| Gateway (la única entrada a la API) | `http://localhost:8080` |
+| Grafana (usuario `admin`, contraseña `admin`) | `http://localhost:3000`, tablero "Stock Volcamelli" |
+| Prometheus | `http://localhost:9090` |
+
+Hay un usuario de prueba por rol: `director@volcamelli.com`, `admin1@volcamelli.com`, `vendedor1@volcamelli.com` e `integracion@volcamelli.com`. Las contraseñas no están en el repositorio; las tiene el equipo.
+
+Para empezar de cero (borra los datos de los MySQL): `docker compose down -v`.
+
+Cuando Inventario esté desplegado, vamos a agregar acá su URL pública.
+
+### Cómo probarlo
+
+Con todo levantado, se hace login y se usa el token en las consultas del contrato ([docs/contracts/README.md](docs/contracts/README.md) tiene todas):
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "integracion@volcamelli.com", "password": "..."}'
+
+curl -i http://localhost:8080/api/branches/1/stock \
+  -H "Authorization: Bearer <token>"
+```
+
+Con `-i`, la respuesta muestra el header `X-Track-ID`. Para ver la traza, pegá ese valor en el campo **Track ID** del tablero: aparecen los logs del gateway y de Inventario de ese pedido, en orden.
+
+Cómo responde el sistema cuando algo falla:
+
+| Prueba | Cómo hacerla | Qué tiene que pasar |
+|---|---|---|
+| Se cae una instancia de Inventario | `docker compose stop inventario1` y repetir las consultas | Siguen respondiendo, ahora todas desde `inventario2`. Se ve en `docker compose logs nginx`, en el campo `instancia` |
+| Se caen las dos | `docker compose stop inventario1 inventario2` | El gateway responde `503 SERVICE_UNAVAILABLE`, nunca stock cero |
+| Volver a la normalidad | `docker compose start inventario1 inventario2` | En menos de 30 segundos NGINX vuelve a repartir entre las dos |
+
+Los tests unitarios usan los repositorios mock, así que no necesitan Docker. Se corren desde la carpeta de cada servicio, por ejemplo `cd servicios/inventario && go test ./...`.
 
 ## Documentación
 
@@ -64,12 +101,11 @@ El gateway queda en `http://localhost:8080`. Cuando Inventario esté desplegado,
 
 ## Estructura del repositorio
 
-Las carpetas de los servicios se crean cuando empecemos a implementarlos.
-
 ```text
 Stock-Volcamelli/
 ├── README.md
 ├── SPEC.md
+├── docker-compose.yml
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── adr/
@@ -85,6 +121,8 @@ Stock-Volcamelli/
 │   ├── asistente/
 │   ├── mcp/
 │   └── tiempo-real/
-└── pruebas/
-    └── carga/
+├── nginx/              → balanceo entre las dos instancias de Inventario
+└── observabilidad/     → Prometheus, Grafana y el esquema del MySQL de logs
 ```
+
+Por ahora están el gateway, Usuarios e Inventario. Las carpetas de los demás servicios se crean cuando empecemos a implementarlos.

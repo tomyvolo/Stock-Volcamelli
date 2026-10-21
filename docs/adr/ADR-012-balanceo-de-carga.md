@@ -21,10 +21,10 @@ Usamos la detección de fallas de NGINX con `max_fails=3` y `fail_timeout=30s`: 
 
 Esta detección se basa en los pedidos que pasan. No usamos chequeos activos porque la versión gratuita de NGINX no los tiene.
 
-Cada instancia expone además `GET /health`, que responde bien solo si llega a su MySQL. Lo usa Docker Compose para saber si el contenedor está sano y para reiniciarlo si se cae.
+Cada instancia expone además `GET /health`, que responde si el proceso está vivo. Lo usa Docker Compose para mostrar si el contenedor está sano.
 
 ### La configuración
-El `nginx.conf` tiene solo lo necesario: el grupo `upstream` con las dos instancias (cada una con `max_fails=3 fail_timeout=30s`), `keepalive 32` para que NGINX mantenga hasta 32 conexiones abiertas con las instancias y no abra una por cada pedido, y un `proxy_pass` hacia ese grupo. Todo lo demás queda como viene en NGINX.
+El `nginx.conf` tiene solo lo necesario: el grupo `upstream` con las dos instancias (cada una con `max_fails=3 fail_timeout=30s`), `keepalive 32` para que NGINX mantenga hasta 32 conexiones abiertas con las instancias y no abra una por cada pedido, un `proxy_pass` hacia ese grupo y `proxy_connect_timeout 1s`. Todo lo demás queda como viene en NGINX.
 
 ### Qué pasa con el pedido que falla
 Por cómo viene configurado NGINX:
@@ -32,7 +32,7 @@ Por cómo viene configurado NGINX:
 - **Consultas (`GET`).** Si una instancia no conecta o corta la conexión, NGINX prueba el mismo pedido en la otra. El que consulta no se entera.
 - **Reservas y ajustes (`POST`).** NGINX no los reintenta en la otra instancia: si la primera llegó a hacer la reserva y se cortó la respuesta, reintentarla podría reservar dos veces. Devuelve el error, y lo resuelve quien llamó, como dice [ADR-016](ADR-016-comunicacion-entre-servicios.md): Transferencias marca la transferencia `FALLIDA` y libera en segundo plano.
 
-No cambiamos los timeouts de NGINX. Quien llama a Inventario (el gateway o Transferencias) corta a los 2 segundos con su propio timeout ([ADR-010](ADR-010-resiliencia.md)), así que nadie espera más que eso.
+Quien llama a Inventario (el gateway o Transferencias) corta a los 2 segundos con su propio timeout ([ADR-010](ADR-010-resiliencia.md)), así que nadie espera más que eso. Por eso el único timeout de NGINX que cambiamos es el de conexión, a 1 segundo: cuando una instancia está apagada, NGINX tarda más de 2 segundos en darse cuenta, y quien llama cortaba antes. Así no llegaba a probar la otra instancia ni a contar la falla, y la mitad de los pedidos fallaba. Con 1 segundo, NGINX deja la instancia caída, prueba la otra y le alcanza el tiempo.
 
 ### Si se caen las dos
 NGINX responde `502` si no pudo conectarse con ninguna instancia, o `504` si se conectó pero la respuesta tardó más que su timeout. En los dos casos, o si se cumplen los 2 segundos de quien llama, el gateway responde `503` (servicio no disponible). Nunca respondemos stock cero ni una lista vacía, porque parecería un dato real.
@@ -56,7 +56,7 @@ NGINX registra en su log, por cada pedido, a qué instancia fue (`upstream_addr`
 - **Repartir la carga desde el gateway.** El gateway ya hace autenticación, permisos y ruteo, y sumarle el balanceo lo cargaba de otra responsabilidad. Además Transferencias no pasa por el gateway, así que el gateway tendría que repartir solo una parte de los pedidos y Transferencias necesitaría su propio reparto.
 
 ## Consecuencias
-- NGINX y el gateway son una sola instancia cada uno: si se caen, Inventario no se puede usar aunque las dos instancias estén bien. Lo aceptamos porque son piezas simples, sin estado, que Docker reinicia en segundos.
+- NGINX y el gateway son una sola instancia cada uno: si se caen, Inventario no se puede usar aunque las dos instancias estén bien. Lo aceptamos porque son piezas simples, sin estado, que se vuelven a levantar en segundos.
 - Mientras NGINX no detecta que una instancia se cayó, algunos pedidos fallan. Las consultas se salvan porque se reintentan en la otra; las reservas no.
-- Una instancia que está viva pero muy lenta no cuenta como falla para NGINX, porque no cambiamos su timeout: los pedidos que le tocan fallan por el timeout de 2 segundos de quien llama. Lo vemos en el tablero, con los pedidos por instancia y sus tiempos.
+- Una instancia que está viva pero muy lenta no cuenta como falla para NGINX, porque solo cambiamos el timeout de conexión y no el de respuesta: los pedidos que le tocan fallan por el timeout de 2 segundos de quien llama. Lo vemos en el tablero, con los pedidos por instancia y sus tiempos.
 - El MySQL de Inventario es uno solo para las dos instancias. Tener dos instancias reparte el trabajo de Go, pero no el de la base: si el límite está en MySQL, agregar instancias no ayuda. Eso lo vemos con las pruebas de carga de D13.

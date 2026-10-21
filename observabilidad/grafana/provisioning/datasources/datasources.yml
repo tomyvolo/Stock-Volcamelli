@@ -1,0 +1,19 @@
+# Grafana crea automáticamente las fuentes de métricas y logs al iniciar.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+  - name: MySQL Logs
+    uid: mysql-logs
+    type: mysql
+    access: proxy
+    url: mysql-logs:3306
+    user: grafana_reader
+    jsonData:
+      database: observabilidad
+    secureJsonData:
+      password: ${GRAFANA_MYSQL_PASSWORD}

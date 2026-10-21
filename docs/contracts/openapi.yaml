@@ -316,7 +316,6 @@ components:
   schemas:
     LoginInput:
       type: object
-      additionalProperties: false
       required: [email, password]
       properties:
         email:

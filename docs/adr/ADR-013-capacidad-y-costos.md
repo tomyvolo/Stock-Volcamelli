@@ -9,7 +9,7 @@ Necesitamos saber cuánta carga aguanta el sistema, qué se satura primero y cu�
 ## Decisión
 
 ### Herramienta
-Escribimos un generador de carga propio en Go, en `pruebas/carga/`. Usa un worker pool: una cantidad fija de goroutines que toman pedidos de un channel y los mandan al gateway, cada uno con un `context.WithTimeout` para que un pedido colgado no frene la prueba. Al terminar informa cuántos pedidos hizo, cuántos fallaron y cuánto tardaron.
+Escribimos un generador de carga propio en Go. Usa un worker pool: una cantidad fija de goroutines que toman pedidos de un channel y los mandan al gateway, cada uno con un `context.WithTimeout` para que un pedido colgado no frene la prueba. Al terminar informa cuántos pedidos hizo, cuántos fallaron y cuánto tardaron.
 
 Los tiempos que tomamos como resultado son los de Prometheus (el histograma de duración de cada servicio, del que sale el p95), así medimos con la misma herramienta con la que monitoreamos el sistema.
 

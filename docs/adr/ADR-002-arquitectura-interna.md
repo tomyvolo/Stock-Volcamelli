@@ -35,8 +35,15 @@ servicios/inventario/
 ├── consumers/      → consumidor de RabbitMQ
 ├── services/       → reglas de negocio
 ├── repositories/   → MySQL, Solr y la publicación en RabbitMQ, cada uno con su interfaz y su mock
-└── models/         → structs de productos, stock, reservas y movimientos
+├── models/         → structs de productos, stock, reservas y movimientos
+├── database/       → conexión a MySQL
+├── logs/           → escribe los logs en la tabla app_logs
+├── observability/  → métricas para Prometheus y lectura del TrackID
+├── utils/          → respuestas de error y lectura de parámetros
+└── mysql/          → tablas y datos de prueba que carga MySQL al arrancar
 ```
+
+En services, repositories y models también hay una carpeta por entidad. Cada servicio es un módulo de Go aparte, con su `go.mod` y su `Dockerfile`.
 
 Usuarios y Sucursales tienen la misma estructura, sin la carpeta de consumers. En los dos, Memcached se usa desde la capa de repositories: el repositorio con caché implementa la misma interfaz que el de MySQL y lo tiene adentro, así busca primero en la caché y, si no está, le pide el dato al de MySQL ([ADR-007](ADR-007-cache.md)).
 

@@ -41,7 +41,7 @@ Cada pedido tiene un único id de correlación, el **TrackID**, desde que entra 
 Cada servicio guarda sus logs directo en una tabla de MySQL, y Grafana los lee de ahí.
 
 - **El MySQL de logs** es un contenedor aparte, solo para esto. No usamos la base de ningún servicio, porque los logs se escriben todo el tiempo y le sacarían capacidad al negocio. Cuando el volumen es nuevo, la imagen de MySQL corre `001_schema.sql`, que crea la tabla y un usuario `grafana_reader` que solo puede hacer `SELECT` sobre ella. Los datos quedan en un volumen de Docker.
-- **Cada servicio tiene un paquete `logs`** con dos funciones. `Connect` abre la conexión con GORM (los datos llegan por la variable de entorno `LOGS_MYSQL_DSN`) y corre `AutoMigrate` sobre `app_logs`. `Write(trackID, stage, level, message)` guarda una fila con `db.Table("app_logs").Create(...)`.
+- **Cada servicio tiene un paquete `logs`** con dos funciones. `Connect` abre la conexión con GORM (los datos llegan por la variable de entorno `MYSQL_DSN`) y corre `AutoMigrate` sobre `app_logs`. `Write(trackID, stage, level, message)` guarda una fila con `db.Table("app_logs").Create(...)`.
 - **Si el MySQL de logs falla**, `Write` escribe un aviso por consola con `log.Printf` y el pedido sigue: el log se puede ver con `docker compose logs <servicio>`, pero no aparece en Grafana.
 - **Cada servicio espera a que el MySQL de logs esté listo** antes de arrancar (`depends_on` con `condition: service_healthy` en el Compose), porque necesita la conexión para escribir.
 

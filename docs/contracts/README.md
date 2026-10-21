@@ -64,14 +64,14 @@ curl "http://localhost:8080/api/products?page=1&size=20" \
 Stock de un producto en una sucursal:
 
 ```bash
-curl http://localhost:8080/api/branches/3/products/15/stock \
+curl http://localhost:8080/api/branches/1/products/1/stock \
   -H "Authorization: Bearer <token>"
 ```
 
 Respuesta:
 
 ```json
-{ "branchId": 3, "productId": 15, "productName": "Harina 000", "quantity": 42 }
+{ "branchId": 1, "productId": 1, "productName": "Harina 000", "quantity": 42 }
 ```
 
 ## Dónde probarlo
