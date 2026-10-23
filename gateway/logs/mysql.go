@@ -8,7 +8,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Log contiene los datos que la app guarda por cada evento.
 // MySQL completa id y created_at automáticamente.
 type Log struct {
 	TrackID string `gorm:"size:32;not null;default:'';index:idx_app_logs_track_id"`
@@ -17,10 +16,8 @@ type Log struct {
 	Message string `gorm:"type:text;not null"`
 }
 
-// Store guarda los logs usando GORM.
 type Store struct{ db *gorm.DB }
 
-// Connect conecta GORM a MySQL. En Docker, MYSQL_DSN apunta al servicio mysql.
 func Connect() (*Store, error) {
 	dsn := os.Getenv("MYSQL_DSN")
 	if dsn == "" {
@@ -30,7 +27,6 @@ func Connect() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Agrega stage a una tabla ya existente sin borrar los logs anteriores.
 	if err := db.Table("app_logs").AutoMigrate(&Log{}); err != nil {
 		return nil, err
 	}

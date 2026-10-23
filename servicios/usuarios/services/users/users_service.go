@@ -10,10 +10,24 @@ import (
 	"usuarios/utils"
 )
 
-var ErrInvalidCredentials = errors.New("credenciales inválidas")
+var (
+	ErrInvalidCredentials = errors.New("credenciales inválidas")
+	ErrInvalidRole        = errors.New("el rol no existe")
+	ErrBranchRequired     = errors.New("el admin de sucursal y el vendedor necesitan una sucursal")
+	ErrBranchNotAllowed   = errors.New("el director y la integración no llevan sucursal")
+	ErrNotAllowed         = errors.New("no tiene permiso para crear este usuario")
+	ErrEmailTaken         = errors.New("ya existe un usuario con ese email")
+)
+
+// Roles que puede tener un usuario.
+const (
+	RoleDirector      = "DIRECTOR"
+	RoleAdminSucursal = "ADMIN_SUCURSAL"
+	RoleVendedor      = "VENDEDOR"
+	RoleIntegracion   = "INTEGRACION"
+)
 
 type UsersService struct {
-	// Inyectamos la interfaz, NO la base de datos real
 	Repo repo.UsersRepo
 }
 
@@ -38,4 +52,48 @@ func (s *UsersService) Login(email, password string) (string, users.UserModel, e
 	}
 
 	return token, user, nil
+}
+
+// CreateUser da de alta un usuario. creatorRole y creatorBranch son los de quien lo pide, sacados de su token.
+// El director crea usuarios de cualquier rol; el admin de sucursal, solo vendedores de su sucursal.
+func (s *UsersService) CreateUser(creatorRole string, creatorBranch *uint, user users.UserModel, password string) (users.UserModel, error) {
+	switch user.Role {
+	case RoleAdminSucursal, RoleVendedor:
+		if user.BranchID == nil {
+			return users.UserModel{}, ErrBranchRequired
+		}
+	case RoleDirector, RoleIntegracion:
+		if user.BranchID != nil {
+			return users.UserModel{}, ErrBranchNotAllowed
+		}
+	default:
+		return users.UserModel{}, ErrInvalidRole
+	}
+
+	switch creatorRole {
+	case RoleDirector:
+	case RoleAdminSucursal:
+		if user.Role != RoleVendedor || creatorBranch == nil || *user.BranchID != *creatorBranch {
+			return users.UserModel{}, ErrNotAllowed
+		}
+	default:
+		return users.UserModel{}, ErrNotAllowed
+	}
+
+	_, err := s.Repo.GetUserByEmail(user.Email)
+	if err == nil {
+		return users.UserModel{}, ErrEmailTaken
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return users.UserModel{}, err
+	}
+
+	user.PasswordHash, err = utils.HashPassword(password)
+	if err != nil {
+		return users.UserModel{}, err
+	}
+	if err := s.Repo.CreateUser(&user); err != nil {
+		return users.UserModel{}, err
+	}
+	return user, nil
 }

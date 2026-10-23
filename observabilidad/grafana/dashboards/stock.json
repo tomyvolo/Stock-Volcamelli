@@ -48,6 +48,7 @@
       "type": "logs",
       "datasource": { "type": "mysql", "uid": "mysql-logs" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "options": { "sortOrder": "Ascending", "showTime": true, "wrapLogMessage": true },
       "targets": [
         { "rawSql": "SELECT created_at AS time, CONCAT('[', stage, '] ', CASE WHEN track_id = '' THEN '' ELSE CONCAT('[', track_id, '] ') END, message) AS body, level FROM app_logs WHERE $__timeFilter(created_at) AND (${track_id:sqlstring} = '' OR track_id = ${track_id:sqlstring}) ORDER BY created_at DESC, id DESC LIMIT 100", "rawQuery": true, "format": "table", "refId": "A" }
       ]
@@ -100,6 +101,42 @@
         "showUnfilled": true
       },
       "fieldConfig": { "defaults": { "min": 0, "decimals": 0 }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "title": "Pedidos por segundo en cada instancia de Inventario",
+      "description": "Muestra cómo reparte NGINX los pedidos entre las dos instancias.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "label_replace(sum by (instance) (rate(requests_total{job=\"inventario\"}[1m])), \"instancia\", \"Instancia $1\", \"instance\", \"inventario([0-9]+):.*\")", "legendFormat": "{{instancia}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Estado de las instancias de Inventario",
+      "description": "Levantada si Prometheus puede leer las métricas de la instancia; caída si no responde.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        { "expr": "label_replace(up{job=\"inventario\"}, \"instancia\", \"Instancia $1\", \"instance\", \"inventario([0-9]+):.*\")", "legendFormat": "{{instancia}}", "refId": "A", "instant": true, "range": false }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [ { "type": "value", "options": { "0": { "text": "Caída", "color": "red" }, "1": { "text": "Levantada", "color": "green" } } } ],
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      }
     }
   ]
 }

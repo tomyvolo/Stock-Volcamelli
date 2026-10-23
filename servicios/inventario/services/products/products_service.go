@@ -12,7 +12,6 @@ import (
 var ErrProductNotFound = errors.New("producto no encontrado")
 
 type ProductsService struct {
-	// Inyectamos la interfaz, NO la base de datos real
 	Repo repo.ProductsRepo
 }
 

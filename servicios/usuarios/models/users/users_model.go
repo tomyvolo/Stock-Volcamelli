@@ -10,7 +10,6 @@ type UserModel struct {
 	BranchID     *uint // nil para DIRECTOR e INTEGRACION
 }
 
-// TableName le dice a GORM que la tabla se llama users.
 func (UserModel) TableName() string {
 	return "users"
 }

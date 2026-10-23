@@ -6,6 +6,8 @@ import "github.com/gin-gonic/gin"
 const (
 	CodeInvalidRequest     = "INVALID_REQUEST"
 	CodeInvalidCredentials = "INVALID_CREDENTIALS"
+	CodeForbidden          = "FORBIDDEN"
+	CodeEmailTaken         = "EMAIL_TAKEN"
 	CodeInternal           = "INTERNAL_ERROR"
 )
 

@@ -26,6 +26,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("no se pudo conectar al MySQL de logs: %v", err)
 	}
+	// Sin la clave no se puede firmar ningún token, así que no tiene sentido arrancar.
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Fatal("falta la variable de entorno JWT_SECRET")
+	}
 	db := database.ConnectDB()
 
 	// Inyección de dependencias: repositorio -> servicio -> controlador.
@@ -42,6 +46,8 @@ func main() {
 	api.Use(observability.RecordMetrics, observability.ReadTrackID)
 
 	api.POST("/auth/login", usersController.Login)
+	// El gateway ya controló el token y que el rol sea DIRECTOR o ADMIN_SUCURSAL.
+	api.POST("/create-users", usersController.Create)
 
 	port := os.Getenv("PORT")
 	if port == "" {

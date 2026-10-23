@@ -24,6 +24,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("no se pudo conectar al MySQL de logs: %v", err)
 	}
+	// Sin la clave no se puede validar ningún token, así que no tiene sentido arrancar.
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Fatal("falta la variable de entorno JWT_SECRET")
+	}
 
 	usersURL := os.Getenv("USUARIOS_URL")
 	if usersURL == "" {
@@ -55,6 +59,10 @@ func main() {
 	contract.GET("/products/:productId", gatewayProxy.Forward("inventario", inventoryURL))
 	contract.GET("/branches/:branchId/stock", gatewayProxy.Forward("inventario", inventoryURL))
 	contract.GET("/branches/:branchId/products/:productId/stock", gatewayProxy.Forward("inventario", inventoryURL))
+
+	// Alta de usuarios: solo el director y el admin de sucursal. Qué rol puede crear cada uno lo decide Usuarios.
+	usersAdmin := api.Group("").Use(utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL"))
+	usersAdmin.POST("/create-users", gatewayProxy.Forward("usuarios", usersURL))
 
 	port := os.Getenv("PORT")
 	if port == "" {

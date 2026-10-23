@@ -19,3 +19,10 @@ func (repo UsersMock) GetUserByEmail(email string) (users.UserModel, error) {
 	}
 	return user, nil
 }
+
+// CreateUser guarda el usuario en el mapa y le asigna el siguiente ID, como haría MySQL.
+func (repo UsersMock) CreateUser(user *users.UserModel) error {
+	user.ID = uint(len(repo.MockDB) + 1)
+	repo.MockDB[user.Email] = *user
+	return nil
+}

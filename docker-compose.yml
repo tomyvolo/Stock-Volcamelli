@@ -1,5 +1,5 @@
 # Una sola orden, `docker compose up --build`, levanta todo el sistema desde la raíz del repositorio.
-# Las claves de este archivo son solo para correrlo en local.
+# Las claves se leen del archivo .env (ver .env.example), que no se sube al repositorio.
 name: stock-volcamelli
 
 services:
@@ -10,9 +10,9 @@ services:
     environment:
       PORT: "8080"
       # Cada servicio usa este usuario para insertar sus logs en la tabla app_logs.
-      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
       # Tiene que ser la misma clave que usa Usuarios para firmar los tokens.
-      JWT_SECRET: ${JWT_SECRET:-solo-para-desarrollo-local}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       USUARIOS_URL: http://usuarios:8081
       # Inventario se consulta siempre a través de NGINX.
       INVENTARIO_URL: http://nginx
@@ -33,10 +33,9 @@ services:
     build: ./servicios/usuarios
     environment:
       PORT: "8081"
-      DB_DSN: usuarios:usuarios_local@tcp(mysql-usuarios:3306)/usuarios?parseTime=true
-      # Cada servicio usa este usuario para insertar sus logs en la tabla app_logs.
-      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
-      JWT_SECRET: ${JWT_SECRET:-solo-para-desarrollo-local}
+      DB_DSN: ${USUARIOS_DB_USER:?falta USUARIOS_DB_USER en .env}:${USUARIOS_DB_PASSWORD:?falta USUARIOS_DB_PASSWORD en .env}@tcp(mysql-usuarios:3306)/${USUARIOS_DB_NAME:?falta USUARIOS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
     depends_on:
       mysql-usuarios:
         condition: service_healthy
@@ -53,9 +52,8 @@ services:
     build: ./servicios/inventario
     environment:
       PORT: "8082"
-      DB_DSN: inventario:inventario_local@tcp(mysql-inventario:3306)/inventario?parseTime=true
-      # Cada servicio usa este usuario para insertar sus logs en la tabla app_logs.
-      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
+      DB_DSN: ${INVENTARIO_DB_USER:?falta INVENTARIO_DB_USER en .env}:${INVENTARIO_DB_PASSWORD:?falta INVENTARIO_DB_PASSWORD en .env}@tcp(mysql-inventario:3306)/${INVENTARIO_DB_NAME:?falta INVENTARIO_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
     depends_on:
       mysql-inventario:
         condition: service_healthy
@@ -71,8 +69,8 @@ services:
     build: ./servicios/inventario
     environment:
       PORT: "8082"
-      DB_DSN: inventario:inventario_local@tcp(mysql-inventario:3306)/inventario?parseTime=true
-      MYSQL_DSN: demo:demo@tcp(mysql-logs:3306)/observabilidad?parseTime=true
+      DB_DSN: ${INVENTARIO_DB_USER:?falta INVENTARIO_DB_USER en .env}:${INVENTARIO_DB_PASSWORD:?falta INVENTARIO_DB_PASSWORD en .env}@tcp(mysql-inventario:3306)/${INVENTARIO_DB_NAME:?falta INVENTARIO_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
     depends_on:
       mysql-inventario:
         condition: service_healthy
@@ -96,16 +94,19 @@ services:
   # Un MySQL por servicio, y uno aparte solo para los logs.
   mysql-usuarios:
     image: mysql:8.4
+    # Solo para abrir las bases desde la compu (por ejemplo con Workbench); no quedan abiertas a la red.
+    ports:
+      - "127.0.0.1:3310:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: root_local
-      MYSQL_DATABASE: usuarios
-      MYSQL_USER: usuarios
-      MYSQL_PASSWORD: usuarios_local
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?falta MYSQL_ROOT_PASSWORD en .env}
+      MYSQL_DATABASE: ${USUARIOS_DB_NAME}
+      MYSQL_USER: ${USUARIOS_DB_USER}
+      MYSQL_PASSWORD: ${USUARIOS_DB_PASSWORD}
     volumes:
       - mysql_usuarios_data:/var/lib/mysql
       - ./servicios/usuarios/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u usuarios -pusuarios_local usuarios -e 'SELECT 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u $${MYSQL_USER} -p$${MYSQL_PASSWORD} $${MYSQL_DATABASE} -e 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -113,16 +114,18 @@ services:
 
   mysql-inventario:
     image: mysql:8.4
+    ports:
+      - "127.0.0.1:3308:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: root_local
-      MYSQL_DATABASE: inventario
-      MYSQL_USER: inventario
-      MYSQL_PASSWORD: inventario_local
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?falta MYSQL_ROOT_PASSWORD en .env}
+      MYSQL_DATABASE: ${INVENTARIO_DB_NAME}
+      MYSQL_USER: ${INVENTARIO_DB_USER}
+      MYSQL_PASSWORD: ${INVENTARIO_DB_PASSWORD}
     volumes:
       - mysql_inventario_data:/var/lib/mysql
       - ./servicios/inventario/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u inventario -pinventario_local inventario -e 'SELECT 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u $${MYSQL_USER} -p$${MYSQL_PASSWORD} $${MYSQL_DATABASE} -e 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -130,17 +133,19 @@ services:
 
   mysql-logs:
     image: mysql:8.4
+    ports:
+      - "127.0.0.1:3309:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: root_demo
-      MYSQL_DATABASE: observabilidad
-      MYSQL_USER: demo
-      MYSQL_PASSWORD: demo
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?falta MYSQL_ROOT_PASSWORD en .env}
+      MYSQL_DATABASE: ${LOGS_DB_NAME}
+      MYSQL_USER: ${LOGS_DB_USER}
+      MYSQL_PASSWORD: ${LOGS_DB_PASSWORD}
     volumes:
       - mysql_logs_data:/var/lib/mysql
       # Crea la tabla app_logs y el usuario de solo lectura de Grafana.
       - ./observabilidad/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u demo -pdemo observabilidad -e 'SELECT 1 FROM app_logs LIMIT 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u $${MYSQL_USER} -p$${MYSQL_PASSWORD} $${MYSQL_DATABASE} -e 'SELECT 1 FROM app_logs LIMIT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -166,9 +171,11 @@ services:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?falta GRAFANA_ADMIN_PASSWORD en .env}
       # Clave del usuario de solo lectura grafana_reader.
       GRAFANA_MYSQL_PASSWORD: grafana_demo
+      # Nombre de la base de logs, para el datasource de Grafana.
+      LOGS_DB_NAME: ${LOGS_DB_NAME}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./observabilidad/grafana/provisioning:/etc/grafana/provisioning:ro

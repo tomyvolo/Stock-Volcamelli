@@ -8,7 +8,6 @@ type ProductModel struct {
 	Supplier    *string `json:"supplier"` // nil cuando no tiene proveedor
 }
 
-// TableName le dice a GORM que la tabla se llama products.
 func (ProductModel) TableName() string {
 	return "products"
 }

@@ -13,7 +13,6 @@ import (
 var ErrProductNotFound = errors.New("producto no encontrado")
 
 type StockService struct {
-	// Inyectamos las interfaces, NO la base de datos real
 	Repo repo.StockRepo
 	// Lo usamos para saber si un producto sin stock en la sucursal existe o no.
 	ProductsRepo productsRepo.ProductsRepo
