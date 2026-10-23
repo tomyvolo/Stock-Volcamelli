@@ -1,4 +1,7 @@
 -- La imagen oficial de MySQL ejecuta este archivo cuando el volumen se crea por primera vez.
+-- El archivo está en UTF-8; sin esto MySQL lo lee como latin1 y guarda mal las tildes.
+SET NAMES utf8mb4;
+
 CREATE TABLE IF NOT EXISTS users (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
