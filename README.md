@@ -8,17 +8,18 @@ En una empresa con varias sucursales, la misma mercadería está repartida y se 
 
 ## Flujo principal
 
-El flujo principal es la transferencia entre sucursales:
+Nuestro flujo principal es la consulta de Inventario, en particular del stock disponible por sucursal. Es la capacidad que publicamos para otro grupo y el recorrido que tenemos implementado y trazado en esta entrega:
 
-1. Un usuario elige producto, cantidad, sucursal de origen y sucursal de destino, y si quiere, a qué hora quiere que llegue.
-2. Las unidades quedan reservadas en el origen: siguen ahí, pero nadie más las puede usar. Si el origen no tiene suficiente, la transferencia se rechaza.
-3. En segundo plano le pedimos el traslado a Rumbo, el servicio de transporte de otro grupo. Si el usuario pidió una hora y Rumbo propone otra, el usuario la acepta o la rechaza. Si no pidió ninguna, aceptamos la que proponga Rumbo.
-4. Seguimos el traslado hasta que llega: programado, en curso, con demora si la hay.
-5. Cuando la mercadería llega, el stock pasa del origen al destino. Si el traslado se rechaza, se cancela o no se realiza, la reserva se libera y las unidades vuelven a estar disponibles en el origen.
+1. El cliente obtiene un token mediante `POST /api/auth/login` y consulta `GET /api/branches/{branchId}/stock` con ese token. El login es un pedido separado y tiene su propio TrackID.
+2. El gateway valida el token, genera un `X-Track-ID` para la consulta y reenvía el pedido a NGINX.
+3. NGINX distribuye el pedido a una de las dos instancias de Inventario. La instancia lee MySQL y devuelve el stock disponible de la sucursal: `total - reserved`.
+4. El gateway devuelve la respuesta con el mismo `X-Track-ID`. Sus logs y los de Inventario permiten seguir ese pedido en Grafana. El registro de NGINX, consultado por separado, indica qué instancia atendió el pedido.
+
+Por ahora, `branchId` es un identificador numérico. Los datos de prueba de Inventario usan los valores 1, 2 y 3; esta consulta no llama a un servicio de Sucursales ni verifica que el ID corresponda a una sucursal registrada. La transferencia entre sucursales sigue prevista para una etapa posterior. 
 
 ## Cómo está armado
 
-El sistema son cuatro microservicios en Go detrás de un API Gateway, con un frontend en React:
+La arquitectura prevista contempla cuatro microservicios en Go detrás de un API Gateway, con un frontend en React. En esta entrega están operativos Usuarios e Inventario; Sucursales y Transferencias aún no están implementados:
 
 | Servicio | Qué hace |
 |---|---|

@@ -1,10 +1,10 @@
 # ADR-011 — Observabilidad (D11)
 
 ## Estado
-Propuesto. Es la primera versión: los umbrales los ajustamos con las pruebas de carga.
+Aceptado. Los umbrales se contrastan con las pruebas de carga documentadas en [ADR-013](ADR-013-capacidad-y-costos.md).
 
 ## Contexto
-Un pedido puede pasar por el gateway, NGINX, Inventario y Transferencias, y una transferencia sigue viva en procesos de fondo durante días. Cuando algo falla, necesitamos poder seguir un pedido entre servicios, saber en qué servicio falló, saber si el sistema anda bien sin mirar log por log y enterarnos de un problema antes de que nos lo diga un usuario.
+Nuestro flujo principal en esta entrega es la consulta de Inventario: un pedido de stock atraviesa el gateway, NGINX y una instancia de Inventario, que lee MySQL. Necesitamos correlacionar la entrada y salida del pedido con la consulta atendida por Inventario, conocer el estado de cada instancia y detectar errores. Las transferencias y sus procesos de fondo pertenecen al alcance previsto para etapas posteriores; no son la traza distribuida implementada en esta entrega.
 
 ## Decisión
 
@@ -35,7 +35,7 @@ Cada pedido tiene un único id de correlación, el **TrackID**, desde que entra 
 - El middleware `AddTrackID` del gateway corre antes que cualquier otra cosa. Genera 16 bytes aleatorios y los escribe como 32 caracteres hexadecimales. Si no puede generarlo, responde `500`.
 - Lo guarda en el contexto de Gin con `ctx.Set("track_id", ...)`, para que el resto del gateway lo lea con `ctx.GetString("track_id")`, y lo devuelve en el header `X-Track-ID` de la respuesta. Así, si el otro grupo o un usuario reporta un problema, nos puede dar el TrackID de ese pedido.
 - Se lo pasa al servicio en el mismo header `X-Track-ID`. Los servicios nunca generan uno: un middleware lo lee del header y lo deja en el contexto, y lo pasan igual en cada llamada a otro servicio (incluidas las que pasan por NGINX) y en los eventos de RabbitMQ, como un header del mensaje.
-- Transferencias guarda en cada transferencia el TrackID del pedido que la creó. Todo lo que pasa después con esa transferencia en segundo plano (mandarla a Rumbo, cada cambio de estado, los eventos a Inventario) se registra con ese mismo TrackID, así la vida completa de una transferencia se sigue con un solo id.
+- Cuando se implemente Transferencias, se prevé conservar el TrackID del pedido que la creó en los pasos posteriores de esa transferencia. Esa propagación futura todavía no forma parte de la traza de Inventario descrita aquí.
 
 ### Logs
 Cada servicio guarda sus logs directo en una tabla de MySQL, y Grafana los lee de ahí.
@@ -65,28 +65,21 @@ Qué va en el mensaje:
 - Nunca contraseñas, tokens ni las credenciales de Rumbo.
 
 ### Trazas
-La traza de un pedido son sus logs: todas las filas de `app_logs` con su TrackID, ordenadas por `created_at`. Cada servicio escribe un log al recibir el pedido, en cada paso importante (llamar a otro servicio o a Rumbo, usar la base, Memcached o Solr) y al responder.
 
-Por ejemplo, la traza de crear una transferencia:
+La traza distribuida del flujo principal corresponde a la consulta de Inventario: `GET /api/branches/{branchId}/stock`. En esta etapa, `branchId` identifica los registros de stock precargados; la consulta no depende del futuro servicio de Sucursales ni valida allí la existencia del ID. El gateway genera un TrackID, lo devuelve en `X-Track-ID` y lo reenvía a través de NGINX. Inventario conserva ese valor en sus logs. Las filas de `app_logs` con el mismo `track_id` permiten correlacionar lo registrado por el gateway y por Inventario:
 
 ```sql
 SELECT created_at, stage, level, message
 FROM app_logs
-WHERE track_id = 'a1b2...'
+WHERE track_id = '<X-Track-ID de la respuesta>'
 ORDER BY created_at, id;
 ```
 
-| created_at | stage | level | message |
-|---|---|---|---|
-| 14:03:12.001 | gateway | info | pedido recibido POST /api/transfers |
-| 14:03:12.025 | transferencias | info | sucursales 3 y 7 consultadas en 20 ms |
-| 14:03:12.096 | inventario | info | reserva creada para la transferencia 42 en 70 ms |
-| 14:03:12.112 | transferencias | info | transferencia 42 guardada como RESERVADA |
-| 14:03:12.121 | gateway | info | respuesta 201 en 120 ms |
+En una consulta exitosa, los logs registran la recepción del pedido en el gateway, el resultado de la consulta de stock en Inventario y la respuesta del gateway. El tiempo que registra Inventario corresponde a la atención de la operación en el controlador; los logs actuales no separan la duración de la consulta MySQL. Si el gateway rechaza el pedido antes de reenviarlo, o no llega a Inventario, puede faltar la fila de Inventario.
 
-Se ve por qué servicios pasó el pedido, en qué orden y cuánto tardó cada paso. Si falla, la última fila tiene `level = error` y `stage` dice en qué servicio se cortó; los servicios que venían después no aparecen. Nuestros flujos hacen las llamadas una detrás de otra, así que el orden por fecha alcanza para reconstruir el recorrido.
+NGINX también recibe el mismo `X-Track-ID`, pero escribe `track_id` e `instancia` en su **access log**. Para identificar cuál de las dos instancias atendió un pedido concreto hay que consultar `docker compose logs nginx` y buscar ese TrackID. Ese registro de NGINX no se guarda en `app_logs` y no aparece en el panel de logs de Grafana. Grafana sí muestra los logs correlacionados del gateway y de Inventario y métricas agregadas por instancia, que no identifican la instancia de un TrackID individual.
 
-En una consulta del contrato, la traza muestra el paso por el gateway, la instancia de Inventario que atendió el pedido (NGINX la registra con el mismo TrackID) y cuánto tardó la consulta a MySQL.
+
 
 ### Métricas
 Cada servicio tiene el middleware `RecordMetrics` en su grupo de rutas. Toma la hora, deja que Gin ejecute el controller con `ctx.Next()`, y al volver registra dos métricas con las etiquetas `route` (la ruta, por ejemplo `/api/branches/:branchId/stock`) y `status` (el código HTTP):
