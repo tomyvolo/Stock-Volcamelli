@@ -163,5 +163,6 @@ Stock-Volcamelli/
 │   ├── mcp/
 │   └── tiempo-real/
 ├── nginx/              → balanceo entre las dos instancias de Inventario
+├── pruebas/carga/      → generador de carga para las pruebas de capacidad 
 └── observabilidad/     → Prometheus, Grafana y el esquema del MySQL de logs
 ```

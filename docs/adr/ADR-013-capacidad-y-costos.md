@@ -1,7 +1,7 @@
 # ADR-013 — Capacidad y costos (D13)
 
 ## Estado
-Aceptado, con una primera medición (23/10/2026) sobre lo que hoy está implementado: las consultas del contrato, con una y con dos instancias de Inventario. Los escenarios de caché, reservas y búsqueda quedan pendientes hasta que existan Sucursales, Transferencias y Solr.
+Aceptado.
 
 ## Contexto
 Necesitamos saber cuánta carga aguanta el sistema, qué se satura primero y cuánto cuesta tenerlo andando. También queremos comprobar con números dos decisiones que tomamos: que la caché de sucursales y usuarios sirve ([ADR-007](ADR-007-cache.md)) y que tener dos instancias de Inventario ayuda ([ADR-012](ADR-012-balanceo-de-carga.md)).
@@ -21,13 +21,13 @@ El p95 del generador es lo que ve quien consulta, de punta a punta. Prometheus n
 Todas las pruebas entran por el gateway, con un token, igual que un usuario real.
 
 ### Escenarios
-| Escenario | Qué simula | Para qué | Estado |
+| Escenario | Qué simula | Para qué | Resultados |
 |---|---|---|---|
-| **Consultas del contrato** | El otro grupo y nuestras pantallas consultando el stock de una sucursal | Ver cuántas consultas por segundo aguanta el sistema dentro del objetivo de 500 ms de p95 ([ADR-011](ADR-011-observabilidad.md)) | Medido |
-| **Una y dos instancias** | El mismo escenario con una sola instancia de Inventario y con dos | Ver si la segunda instancia sube la capacidad | Medido |
-| **Sucursales y usuarios, con y sin caché** | Usuarios abriendo la sección de sucursales y creando transferencias (cada una pide dos sucursales), una vez con `CACHE_ENABLED=false` y otra con la caché prendida | Medir cuánto mejora la caché y cuántas consultas les saca a los MySQL de Usuarios y Sucursales | Pendiente: falta Sucursales y la caché |
-| **Reservas concurrentes** | Muchas transferencias del mismo producto y la misma sucursal al mismo tiempo, mientras siguen las consultas | Ver cuánto aguantan las reservas con `FOR UPDATE` sobre la misma fila, y comprobar que el stock nunca queda negativo | Pendiente: falta Transferencias |
-| **Búsqueda** | Búsquedas con texto y filtro de proveedor | Ver la respuesta de Solr y su atraso mientras se modifican productos | Pendiente: falta Solr |
+| **Consultas del contrato** | El otro grupo y nuestras pantallas consultando el stock de una sucursal | Ver cuántas consultas por segundo aguanta el sistema dentro del objetivo de 500 ms de p95 ([ADR-011](ADR-011-observabilidad.md)) | Abajo |
+| **Una y dos instancias** | El mismo escenario con una sola instancia de Inventario y con dos | Ver si la segunda instancia sube la capacidad | Abajo |
+| **Sucursales y usuarios, con y sin caché** | Usuarios abriendo la sección de sucursales y creando transferencias (cada una pide dos sucursales), una vez con `CACHE_ENABLED=false` y otra con la caché prendida | Medir cuánto mejora la caché y cuántas consultas les saca a los MySQL de Usuarios y Sucursales | Se mide con Sucursales y la caché |
+| **Reservas concurrentes** | Muchas transferencias del mismo producto y la misma sucursal al mismo tiempo, mientras siguen las consultas | Ver cuánto aguantan las reservas con `FOR UPDATE` sobre la misma fila, y comprobar que el stock nunca queda negativo | Se mide con Transferencias |
+| **Búsqueda** | Búsquedas con texto y filtro de proveedor | Ver la respuesta de Solr y su atraso mientras se modifican productos | Se mide con Solr |
 
 Cada escenario sube la carga de a poco (de 10 a 200 workers) hasta que el p95 pasa los 500 ms o aparecen errores. Ese punto es la capacidad máxima.
 
