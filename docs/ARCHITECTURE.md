@@ -138,7 +138,19 @@ Las comunicaciones entre servicios son:
 
 Todas las llamadas HTTP internas tienen un timeout de 2 segundos. Cada servicio publica sus eventos apenas guarda el cambio. Inventario los procesa una sola vez aunque lleguen repetidos, los confirma con ACK manual y, si un mensaje no se puede procesar, lo manda a una cola de errores. El detalle está en [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md).
 
-## 7. Flujo principal: transferencia entre sucursales
+## 7. Flujo principal: consulta de stock
+
+Es la consulta del stock disponible de una sucursal (`GET /api/branches/{branchId}/stock`). La usan todas las pantallas y es lo que le ofrecemos al otro grupo ([docs/contracts/README.md](contracts/README.md)).
+
+1. El cliente hace login en Usuarios, a través del gateway, y recibe el JWT.
+2. Con el token, pide el stock de la sucursal. El gateway valida el token y el rol, le asigna al pedido un TrackID y lo reenvía a NGINX con el TrackID y los datos del usuario en los headers.
+3. NGINX manda el pedido a una de las dos instancias de Inventario. Si una no conecta en 1 segundo, prueba la otra.
+4. Inventario lee su MySQL y devuelve, para cada producto de la sucursal, el disponible: el total menos lo reservado. Con `?lowStock=true` devuelve solo los que tienen 5 unidades o menos.
+5. El gateway devuelve la respuesta con el header `X-Track-ID`. El gateway e Inventario guardan sus logs con ese TrackID, y NGINX lo registra junto con la instancia que atendió el pedido.
+
+Si las dos instancias de Inventario están caídas o no responden en 2 segundos, el gateway responde `503`, nunca un stock en cero. La consulta no depende de Sucursales: Inventario guarda solo el id de cada sucursal.
+
+## 8. Transferencia entre sucursales
 
 Cuando un usuario crea la transferencia, las unidades quedan reservadas en el origen. Pasan al destino recién cuando Rumbo informa que el traslado llegó. Si el traslado se rechaza, se cancela o no se realiza, la reserva se libera y el origen vuelve a tenerlas disponibles.
 
@@ -180,7 +192,7 @@ Los estados de una transferencia son:
 | `CANCELADA` | La transferencia se canceló. La reserva se liberó |
 | `NO_REALIZADA` | Rumbo no pudo hacer el traslado o lo interrumpió. La reserva se liberó |
 
-## 8. Integración con otros grupos
+## 9. Integración con otros grupos
 
 **Lo que ofrecemos.** El otro grupo puede consultar el catálogo y el stock disponible de Inventario: listar productos, ver un producto, el stock de una sucursal y el stock de un producto en una sucursal. Entra por el gateway con la cuenta `INTEGRACION`. El contrato está en [contracts/README.md](contracts/README.md) y la decisión en [ADR-017](adr/ADR-017-contrato-propio.md).
 
@@ -193,7 +205,7 @@ Los estados de una transferencia son:
 
 Solo le habla Transferencias, siempre en segundo plano, así que si Rumbo no responde nadie se queda esperando. Cómo traducimos sus estados y qué hacemos con cada error está en [ADR-009](adr/ADR-009-consumo-de-rumbo.md).
 
-## 9. Observabilidad
+## 10. Observabilidad
 
 Cada pedido tiene un único TrackID desde que entra al gateway. Lo genera el gateway, se lo pasa a los servicios en el header `X-Track-ID` y lo devuelve en la respuesta. Los servicios no generan uno propio: lo pasan igual en cada llamada a otro servicio y en los eventos de RabbitMQ.
 
@@ -203,7 +215,7 @@ Cada servicio expone sus métricas en `GET /metrics`: el contador `requests_tota
 
 Prometheus junta las métricas y Grafana las muestra en un tablero junto con los logs y las trazas, donde también están las alertas. El objetivo de servicio está puesto sobre lo que publicamos: 99 % de las consultas del contrato sin error y 95 % en menos de 500 ms. El detalle está en [ADR-011](adr/ADR-011-observabilidad.md).
 
-## 10. Qué pasa cuando algo falla
+## 11. Qué pasa cuando algo falla
 
 Cada falla afecta solo lo que depende de esa pieza. Lo más importante, consultar stock y lo que publicamos, depende solo de Inventario y su MySQL:
 
@@ -214,13 +226,13 @@ Cada falla afecta solo lo que depende de esa pieza. Lo más importante, consulta
 
 La tabla completa de qué sigue andando cuando se cae cada pieza está en [ADR-010](adr/ADR-010-resiliencia.md). Cuánta carga aguanta el sistema y cuánto cuesta tenerlo andando está en [ADR-013](adr/ADR-013-capacidad-y-costos.md).
 
-## 11. Asistente y tiempo real
+## 12. Asistente y tiempo real
 
 **Asistente.** El frontend tiene un chat donde el usuario pregunta en lenguaje natural ("¿qué productos tienen stock bajo en Nueva Córdoba?") o pide crear una transferencia. El servicio Asistente le manda la pregunta a un modelo de lenguaje junto con las herramientas disponibles, y las ejecuta a través de un servidor MCP. El servidor MCP no tiene IA: cada herramienta es una llamada a nuestra API por el gateway, con el token del usuario, así que el asistente puede hacer exactamente lo mismo que el usuario. Antes de crear una transferencia, el usuario la confirma en el chat. El detalle está en [ADR-018](adr/ADR-018-asistente.md).
 
 **Tiempo real.** El servicio Tiempo Real consume de RabbitMQ los cambios de stock y de estado de las transferencias, y se los manda al frontend por una conexión que queda abierta (Server-Sent Events en `/api/events`). Así, cuando Rumbo informa que un traslado salió o llegó, la pantalla se actualiza sola. El detalle está en [ADR-019](adr/ADR-019-tiempo-real.md).
 
-## 12. Decisiones de arquitectura
+## 13. Decisiones de arquitectura
 
 | Decisión | ADR vigente | Reemplazó a |
 |---|---|---|

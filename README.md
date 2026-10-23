@@ -8,18 +8,18 @@ En una empresa con varias sucursales, la misma mercadería está repartida y se 
 
 ## Flujo principal
 
-Nuestro flujo principal es la consulta de Inventario, en particular del stock disponible por sucursal. Es la capacidad que publicamos para otro grupo y el recorrido que tenemos implementado y trazado en esta entrega:
+El flujo principal es la consulta del stock disponible de una sucursal. Es lo que le ofrecemos a otro grupo y lo que usan todas las pantallas:
 
-1. El cliente obtiene un token mediante `POST /api/auth/login` y consulta `GET /api/branches/{branchId}/stock` con ese token. El login es un pedido separado y tiene su propio TrackID.
-2. El gateway valida el token, genera un `X-Track-ID` para la consulta y reenvía el pedido a NGINX.
-3. NGINX distribuye el pedido a una de las dos instancias de Inventario. La instancia lee MySQL y devuelve el stock disponible de la sucursal: `total - reserved`.
-4. El gateway devuelve la respuesta con el mismo `X-Track-ID`. Sus logs y los de Inventario permiten seguir ese pedido en Grafana. El registro de NGINX, consultado por separado, indica qué instancia atendió el pedido.
+1. El cliente hace login (`POST /api/auth/login`) y, con el token, consulta `GET /api/branches/{branchId}/stock`.
+2. El gateway valida el token, le asigna al pedido un TrackID y lo reenvía a NGINX.
+3. NGINX lo manda a una de las dos instancias de Inventario, que lee su MySQL y devuelve el disponible de cada producto: el total menos lo reservado.
+4. El gateway devuelve la respuesta con el header `X-Track-ID`. Con ese valor se ve en Grafana el recorrido del pedido, y en el log de NGINX qué instancia lo atendió.
 
-Por ahora, `branchId` es un identificador numérico. Los datos de prueba de Inventario usan los valores 1, 2 y 3; esta consulta no llama a un servicio de Sucursales ni verifica que el ID corresponda a una sucursal registrada. La transferencia entre sucursales sigue prevista para una etapa posterior. 
+El disponible descuenta lo reservado porque una transferencia entre sucursales reserva las unidades en el origen hasta que llegan a destino. `branchId` es el id de la sucursal: el dueño de las sucursales es su propio servicio, e Inventario solo guarda ese id, así que la consulta no depende de él.
 
 ## Cómo está armado
 
-La arquitectura prevista contempla cuatro microservicios en Go detrás de un API Gateway, con un frontend en React. En esta entrega están operativos Usuarios e Inventario; Sucursales y Transferencias aún no están implementados:
+El sistema son cuatro microservicios en Go detrás de un API Gateway, con un frontend en React:
 
 | Servicio | Qué hace |
 |---|---|
@@ -137,6 +137,7 @@ Las bases se pueden abrir desde la compu con un cliente de MySQL, como Workbench
 | [docs/diagramas/contenedores.md](docs/diagramas/contenedores.md) | Diagrama de contenedores |
 | [docs/adr/](docs/adr/) | Decisiones de arquitectura |
 | [docs/contracts/README.md](docs/contracts/README.md) | Contrato de lo que ofrecemos y cómo probarlo |
+| [docs/validacion.md](docs/validacion.md) | Pruebas sobre el sistema levantado que respaldan las decisiones |
 
 ## Estructura del repositorio
 

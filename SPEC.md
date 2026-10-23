@@ -2,7 +2,7 @@
 
 ## 1. Descripción
 
-Stock Volcamelli lleva el inventario de una empresa con varias sucursales. Registra los productos, cuánto stock tiene cada sucursal y cada movimiento de ese stock. La operación principal es la transferencia de mercadería entre sucursales.
+Stock Volcamelli lleva el inventario de una empresa con varias sucursales. Registra los productos, cuánto stock tiene cada sucursal y cada movimiento de ese stock. El flujo principal es la consulta del stock disponible de cada sucursal, que es lo que usan todas las pantallas y lo que le ofrecemos a otro grupo. El stock se mueve con transferencias de mercadería entre sucursales.
 
 Una transferencia no es solo cambiar dos números. No se puede mandar más de lo que hay disponible en el origen, el stock nunca puede quedar negativo y el traslado lo hace Rumbo, el servicio de transporte de otro grupo. Por eso, al crear una transferencia las unidades quedan reservadas en el origen y pasan al destino recién cuando la mercadería llega. Si el traslado se rechaza, se cancela o no se realiza, la reserva se libera.
 
