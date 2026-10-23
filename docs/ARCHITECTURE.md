@@ -28,13 +28,15 @@ Los diagramas están en [diagramas/contexto.md](diagramas/contexto.md) y [diagra
 | Backend de los servicios | Go con Gin para la API HTTP y GORM para MySQL. Transferencias usa el driver oficial de MongoDB para Go |
 | API Gateway | Go con Gin, hecho por nosotros |
 | Frontend | React |
-| Bases de datos | MySQL 8 (un contenedor por servicio) y MongoDB |
+| Bases de datos | MySQL 8.4 (un contenedor por servicio) y MongoDB |
 | Mensajería | RabbitMQ |
+| Autenticación | JWT firmado con HS256 (`golang-jwt`) y contraseñas guardadas con bcrypt |
 | Balanceo de Inventario | NGINX |
 | Búsqueda del catálogo | Solr ([ADR-006](adr/ADR-006-busqueda.md)) |
 | Caché | Memcached ([ADR-007](adr/ADR-007-cache.md)) |
 | Observabilidad | Logs guardados con GORM en un MySQL de logs, Prometheus y Grafana ([ADR-011](adr/ADR-011-observabilidad.md)) |
 | Asistente | Servidor MCP con el SDK oficial para Go y un modelo de lenguaje por API compatible con OpenAI ([ADR-018](adr/ADR-018-asistente.md)) |
+| Tests | Tests unitarios de Go sobre las reglas de negocio de cada service, usando los repositorios mock |
 | Pruebas de carga | Un generador de carga propio en Go, con un worker pool ([ADR-013](adr/ADR-013-capacidad-y-costos.md)) |
 | Para levantar todo | Docker Compose |
 
@@ -50,7 +52,7 @@ Es la única puerta de entrada al sistema, tanto para nuestro frontend como para
 
    | Ruta | Servicio |
    |---|---|
-   | `/api/auth/*`, `/api/users/*` | Usuarios |
+   | `/api/auth/*`, `/api/create-users`, `/api/users/*` | Usuarios |
    | `/api/branches/{id}/stock`, `/api/branches/{id}/products/*` | Inventario (por NGINX) |
    | `/api/branches/*` (el resto) | Sucursales |
    | `/api/products/*` | Inventario (por NGINX) |
@@ -65,7 +67,7 @@ Las llamadas entre servicios no pasan por el gateway: van directo de un servicio
 ## 4. Los servicios
 
 ### Usuarios
-Guarda los usuarios con su email, contraseña (hasheada), rol y sucursal. Hace el login y emite el JWT, que dura 1 hora y lleva el id del usuario, su rol y su sucursal. Si a un usuario le cambian el rol o la sucursal, se aplica cuando vuelve a hacer login. Hay cuatro roles:
+Guarda los usuarios con su email, contraseña (hasheada), rol y sucursal. Hace el login y emite el JWT, que dura 1 hora y lleva el id del usuario, su email, su rol y su sucursal. Si a un usuario le cambian el rol o la sucursal, se aplica cuando vuelve a hacer login. Hay cuatro roles:
 
 | Rol | Sucursal | Qué puede hacer |
 |---|---|---|
@@ -73,6 +75,8 @@ Guarda los usuarios con su email, contraseña (hasheada), rol y sucursal. Hace e
 | `ADMIN_SUCURSAL` | Una | Lo del vendedor, más ajustes de stock en su sucursal y alta de vendedores de su sucursal |
 | `VENDEDOR` | Una | Consulta todo. Crea, cancela y responde los horarios de las transferencias que salen de su sucursal o llegan a ella |
 | `INTEGRACION` | Ninguna | Es la cuenta del grupo que consume nuestro catálogo, y solo puede usar las consultas del contrato |
+
+El alta de usuarios es `POST /api/create-users`, con nombre, email, contraseña, rol y sucursal. El gateway solo la deja pasar con el token de un `DIRECTOR` o un `ADMIN_SUCURSAL`, y Usuarios controla el resto de las reglas: el admin solo crea vendedores de su sucursal, el admin y el vendedor necesitan sucursal y el director y la integración no llevan, y el email no se puede repetir (`409`). La contraseña se guarda hasheada con bcrypt y nunca se devuelve.
 
 Todos los usuarios, salvo `INTEGRACION`, pueden ver la lista de usuarios de cada sucursal con su nombre, email y rol (`GET /api/users?branchId=3`). La contraseña nunca sale de Usuarios. Esa lista se guarda en caché ([ADR-007](adr/ADR-007-cache.md)).
 

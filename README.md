@@ -43,25 +43,26 @@ El detalle está en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Cómo ejecutarlo
 
-Todo el sistema se levanta con Docker, desde la raíz del repositorio:
+Todo el sistema se levanta con Docker, desde la raíz del repositorio. Primero hay que crear el archivo `.env` con las claves, copiando el ejemplo y completándolo:
 
 ```bash
+cp .env.example .env
 docker compose up --build -d
 ```
+
+El `.env` no se sube al repositorio. Si falta alguna clave, `docker compose` avisa cuál.
 
 La primera vez tarda un par de minutos, porque los MySQL cargan sus tablas y datos de prueba. Después queda:
 
 | Qué | Dónde |
 |---|---|
 | Gateway (la única entrada a la API) | `http://localhost:8080` |
-| Grafana (usuario `admin`, contraseña `admin`) | `http://localhost:3000`, tablero "Stock Volcamelli" |
+| Grafana (usuario `admin`, contraseña la de `GRAFANA_ADMIN_PASSWORD`) | `http://localhost:3000`, tablero "Stock Volcamelli" |
 | Prometheus | `http://localhost:9090` |
 
 Hay un usuario de prueba por rol: `director@volcamelli.com`, `admin1@volcamelli.com`, `vendedor1@volcamelli.com` e `integracion@volcamelli.com`. Las contraseñas no están en el repositorio; las tiene el equipo.
 
 Para empezar de cero (borra los datos de los MySQL): `docker compose down -v`.
-
-Cuando Inventario esté desplegado, vamos a agregar acá su URL pública.
 
 ### Cómo probarlo
 
@@ -78,6 +79,17 @@ curl -i http://localhost:8080/api/branches/1/stock \
 
 Con `-i`, la respuesta muestra el header `X-Track-ID`. Para ver la traza, pegá ese valor en el campo **Track ID** del tablero: aparecen los logs del gateway y de Inventario de ese pedido, en orden.
 
+El director y el admin de sucursal pueden dar de alta usuarios con `POST /api/create-users`. El director crea usuarios de cualquier rol; el admin, solo vendedores de su sucursal. Con el token de un director:
+
+```bash
+curl -X POST http://localhost:8080/api/create-users \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Vendedor 2", "email": "vendedor2@volcamelli.com", "password": "...", "role": "VENDEDOR", "branchId": 1}'
+```
+
+Responde `201` con el usuario creado, sin la contraseña, que se guarda hasheada con bcrypt. Con un email repetido responde `409`, y si lo intenta un vendedor o la cuenta de integración, `403`.
+
 Cómo responde el sistema cuando algo falla:
 
 | Prueba | Cómo hacerla | Qué tiene que pasar |
@@ -87,6 +99,32 @@ Cómo responde el sistema cuando algo falla:
 | Volver a la normalidad | `docker compose start inventario1 inventario2` | En menos de 30 segundos NGINX vuelve a repartir entre las dos |
 
 Los tests unitarios usan los repositorios mock, así que no necesitan Docker. Se corren desde la carpeta de cada servicio, por ejemplo `cd servicios/inventario && go test ./...`.
+
+### Comandos útiles
+
+| Comando | Qué hace |
+|---|---|
+| `docker compose ps` | Muestra qué contenedores están corriendo |
+| `docker compose logs inventario1 --tail 20` | Muestra los últimos logs de un servicio |
+| `docker compose logs nginx --tail 5` | Muestra a qué instancia de Inventario mandó NGINX cada pedido |
+| `docker compose stop inventario1` / `docker compose start inventario1` | Apaga o prende un servicio |
+| `docker stats` | Muestra la CPU y la memoria de cada contenedor |
+| `docker compose down` | Apaga todo sin borrar los datos |
+
+Las bases se pueden abrir desde la compu con un cliente de MySQL, como Workbench, en `127.0.0.1`:
+
+| Base | Puerto | Usuario y contraseña (del `.env`) | Esquema |
+|---|---|---|---|
+| Usuarios | 3310 | `USUARIOS_DB_USER` / `USUARIOS_DB_PASSWORD` | `USUARIOS_DB_NAME` |
+| Inventario | 3308 | `INVENTARIO_DB_USER` / `INVENTARIO_DB_PASSWORD` | `INVENTARIO_DB_NAME` |
+| Logs | 3309 | `LOGS_DB_USER` / `LOGS_DB_PASSWORD` | `LOGS_DB_NAME` |
+
+## Cómo trabajamos con Git
+
+- `main` tiene siempre una versión que funciona y es la que se evalúa. No se trabaja directo sobre ella.
+- Cada cambio se hace en una rama propia que sale de `main`: `feat/<tema>` para funcionalidades (por ejemplo `feat/inventario`) y `docs/<tema>` para documentación.
+- Cuando la rama está lista, se abre un pull request hacia `main`. Otro integrante lo revisa (que compile, que pasen los tests y que respete las capas) y recién ahí se mergea.
+- Después del merge levantamos todo con `docker compose up --build` y probamos el recorrido completo.
 
 ## Documentación
 
@@ -106,6 +144,7 @@ Stock-Volcamelli/
 ├── README.md
 ├── SPEC.md
 ├── docker-compose.yml
+├── .env.example        → las claves que hay que completar en el .env
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── adr/
@@ -124,5 +163,3 @@ Stock-Volcamelli/
 ├── nginx/              → balanceo entre las dos instancias de Inventario
 └── observabilidad/     → Prometheus, Grafana y el esquema del MySQL de logs
 ```
-
-Por ahora están el gateway, Usuarios e Inventario. Las carpetas de los demás servicios se crean cuando empecemos a implementarlos.

@@ -38,6 +38,14 @@ Las consultas son tres: por id, por estado (los procesos de fondo buscan las que
 
 Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en dos tablas (transferencia e historial de estados) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una contrapropuesta trae un horario y su vencimiento, un traslado en curso puede traer una demora. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
 
+## Validación
+Validamos el uso de MySQL con el sistema levantado con Docker Compose:
+
+- **Una base por servicio.** Usuarios e Inventario tienen cada uno su MySQL, y los logs van a un tercero. Cada base se arma sola al levantar Docker Compose, con sus tablas y datos de prueba.
+- **El stock disponible sale de la base.** La tabla de stock guarda el total y lo reservado, y la consulta devuelve la resta. Con los datos de prueba, el producto 1 en la sucursal 1 tiene 46 unidades y 4 reservadas, y la consulta devuelve 42.
+- **La base no deja que lo reservado supere el total**, con una restricción `CHECK` en la tabla.
+- **Ninguna consulta espera más de 2 segundos.** La conexión de cada servicio a MySQL tiene `timeout`, `readTimeout` y `writeTimeout` de 2 segundos, como pide [ADR-010](ADR-010-resiliencia.md).
+
 ## Alternativas que descartamos
 - **Seguir con PostgreSQL.** Funcionaba igual, pero con las herramientas que usamos en Go nos resulta más fácil trabajar con MySQL.
 

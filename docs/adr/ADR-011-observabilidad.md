@@ -86,7 +86,7 @@ ORDER BY created_at, id;
 
 Se ve por qué servicios pasó el pedido, en qué orden y cuánto tardó cada paso. Si falla, la última fila tiene `level = error` y `stage` dice en qué servicio se cortó; los servicios que venían después no aparecen. Nuestros flujos hacen las llamadas una detrás de otra, así que el orden por fecha alcanza para reconstruir el recorrido.
 
-La primera traza que mostramos es la de una consulta del contrato (gateway → NGINX → Inventario → MySQL), que es lo primero que va a estar andando. Cuando esté Transferencias, la del flujo principal: crear una transferencia.
+En una consulta del contrato, la traza muestra el paso por el gateway, la instancia de Inventario que atendió el pedido (NGINX la registra con el mismo TrackID) y cuánto tardó la consulta a MySQL.
 
 ### Métricas
 Cada servicio tiene el middleware `RecordMetrics` en su grupo de rutas. Toma la hora, deja que Gin ejecute el controller con `ctx.Next()`, y al volver registra dos métricas con las etiquetas `route` (la ruta, por ejemplo `/api/branches/:branchId/stock`) y `status` (el código HTTP):
@@ -111,7 +111,7 @@ Además, con el mismo tipo de contador:
 Los ids del negocio van en los logs, nunca como etiquetas: con una etiqueta por transferencia, Prometheus guardaría una serie por cada una.
 
 ### Tablero
-Un tablero en Grafana. Arriba tiene un campo de texto **TrackID**: vacío muestra todos los logs, y con un TrackID pegado filtra los paneles de logs y muestra la traza de ese pedido. Las métricas no se filtran, siguen sumando todos los pedidos.
+Un tablero en Grafana. Arriba tiene un campo de texto **TrackID**: vacío muestra todos los logs, y con un TrackID pegado filtra los paneles de logs y muestra la traza de ese pedido, del primer paso al último. Las métricas no se filtran, siguen sumando todos los pedidos.
 
 | Panel | De dónde sale |
 |---|---|
@@ -119,6 +119,7 @@ Un tablero en Grafana. Arriba tiene un campo de texto **TrackID**: vacío muestr
 | Duración media y p95 por ruta | Prometheus, `request_duration_seconds` |
 | Porcentaje de respuestas `5xx` | Prometheus, `requests_total` |
 | Pedidos por instancia de Inventario | Prometheus, `requests_total` por `instance` |
+| Estado de las instancias de Inventario (levantada o caída) | Prometheus, `up` de cada instancia |
 | Porcentaje de aciertos de la caché | Prometheus, contadores de la caché |
 | Mensajes a la cola de errores y errores de Rumbo | Prometheus, contadores de negocio |
 | Logs del recorrido | MySQL Logs, `app_logs` filtrada por el TrackID |
@@ -144,7 +145,7 @@ Las armamos en Grafana sobre las mismas métricas del tablero:
 | Servicio caído | Prometheus no puede leer `/metrics` de un servicio por 1 minuto |
 | Cola de errores con mensajes | Se mandó al menos un mensaje a la cola de errores |
 
-Por ahora las alertas se ven en Grafana. A dónde se mandan (mail, Discord) lo definimos cuando el sistema esté desplegado.
+Los umbrales salen de los objetivos de servicio y se ajustan con los resultados de las pruebas de carga ([ADR-013](ADR-013-capacidad-y-costos.md)). Las alertas se ven en Grafana; el canal de aviso (mail o Discord) se elige al desplegar.
 
 ## Consecuencias
 - Son tres contenedores más (Prometheus, Grafana y el MySQL de logs) para levantar en cada entorno.

@@ -40,6 +40,11 @@ Todos los errores devuelven el mismo formato, con un código y un mensaje:
 ### Compatibilidad
 Para no romperle nada al otro grupo, solo hacemos cambios que no afecten lo que ya usa: podemos agregar operaciones nuevas o campos nuevos en las respuestas, pero no sacamos ni renombramos campos, ni cambiamos su tipo o su significado. Si alguna vez hiciera falta un cambio así, lo acordamos antes con el grupo consumidor.
 
+### Versionado
+La versión del contrato es la de `info.version` en `openapi.yaml`, y empieza en 1.0.0. Agregar una operación o un campo sube el número del medio (1.1.0), y una corrección que solo toca la documentación sube el último (1.0.1). Si alguna vez tuviéramos que hacer un cambio que rompa lo que ya usa el otro grupo, primero lo acordamos con ellos, como dice la sección anterior, y el contrato pasa a la 2.0.0. La versión vigente y la lista de cambios están en el [README del contrato](../contracts/README.md).
+
+No ponemos la versión en la URL (`/v1/...`): como solo hacemos cambios compatibles, el otro grupo siempre usa las mismas rutas.
+
 ## Alternativas que descartamos
 - **Seguir publicando toda la API de Inventario, como en ADR-008.** Le daba al otro grupo la posibilidad de crear productos y mover stock en nuestro sistema, y no lo necesita.
 - **No pedir autenticación.** Cuando Inventario esté en la nube con una URL pública, cualquiera podría consultar nuestro catálogo y stock.

@@ -60,7 +60,7 @@ flowchart TB
 | Contenedor | Qué hace |
 |---|---|
 | Frontend | La aplicación web que usan el director, los admins de sucursal y los vendedores, con el chat del asistente |
-| API Gateway | La única entrada. Valida el token, controla permisos, limita pedidos y manda cada pedido a su servicio |
+| API Gateway | La única entrada. Valida el token, controla permisos y manda cada pedido a su servicio |
 | Usuarios | Usuarios con su rol y su sucursal, y login |
 | Sucursales | Sucursales con su dirección |
 | Inventario | Catálogo, stock, reservas y movimientos. Corre en dos instancias |

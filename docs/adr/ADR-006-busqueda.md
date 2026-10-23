@@ -19,12 +19,15 @@ La búsqueda es solo para nuestro frontend: la pueden usar todos los roles salvo
 |---|---|
 | `q` | Texto a buscar en el nombre y la descripción. Es obligatorio: si viene vacío, responde `400` |
 | `supplier` | Solo productos de ese proveedor, con el nombre exacto |
-| `limit` | Cuántos resultados devolver. Tiene que ser un entero positivo (si no, `400`); si no viene, devuelve 10 |
+| `page` | Qué página devolver, empezando en 1. Si no viene, es la 1 |
+| `size` | Cuántos resultados por página, de 1 a 100. Si no viene, son 20 |
 
-La respuesta trae la lista de resultados, ordenados por relevancia, cada uno con su id, nombre, proveedor y score:
+Si `page` o `size` no son números válidos, responde `400`. Son los mismos parámetros y las mismas reglas que el listado de productos.
+
+La respuesta trae la página pedida, el total de resultados y la lista, ordenada por relevancia, con el id, nombre, proveedor y score de cada producto:
 
 ```json
-{ "results": [ { "id": "15", "nombre": "Harina 000", "proveedor": "Molinos del Sur", "score": 3.1 } ] }
+{ "page": 1, "size": 20, "total": 3, "results": [ { "id": "15", "nombre": "Harina 000", "proveedor": "Molinos del Sur", "score": 3.1 } ] }
 ```
 
 La búsqueda no trae stock. Para ver cuánto hay de un producto, el frontend usa las consultas de stock de Inventario, que leen MySQL. El stock bajo de una sucursal también sale de ahí: `GET /api/branches/{id}/stock?lowStock=true` devuelve solo los productos con 5 unidades disponibles o menos en esa sucursal.
@@ -34,9 +37,11 @@ El frontend nunca le manda a Solr una consulta armada: Inventario la arma a part
 
 - el texto va en `q`, con `defType=edismax` y `qf=nombre^5 descripcion`, para que una coincidencia en el nombre pese más que una en la descripción;
 - el proveedor va como filtro `fq` con `{!term f=proveedor}`, que compara el valor exacto y no cambia la relevancia;
-- `limit` va en `rows`, y `fl` pide solo los campos que mostramos, más el `score`.
+- la página se traduce a `start` y `rows` de Solr: `rows` es `size` y `start` es `(page - 1) * size`. Por ejemplo, la página 3 de a 20 es `start=40&rows=20`;
+- el total sale de `numFound`, que Solr devuelve en cada respuesta;
+- `fl` pide solo los campos que mostramos, más el `score`.
 
-El código sigue la misma división que el resto de Inventario: el controller lee y valida los parámetros, el service completa el `limit` por defecto, y el repositorio de Solr es el único que arma la URL, hace el pedido HTTP y lee el JSON. El service usa el buscador a través de una interfaz, así que no conoce Solr.
+El código sigue la misma división que el resto de Inventario: el controller lee y valida los parámetros (las páginas con la misma función que usa el listado de productos), el service llama al buscador, y el repositorio de Solr es el único que arma la URL, hace el pedido HTTP y lee el JSON. El service usa el buscador a través de una interfaz, así que no conoce Solr.
 
 ### Qué guardamos en Solr
 Un índice `productos`, con un documento por producto y solo los campos que hacen falta para buscar, filtrar y mostrar:
@@ -67,7 +72,8 @@ El pedido a Solr tiene un timeout de 2 segundos. Si Solr no responde o devuelve 
 - **Guardar también el disponible de cada sucursal en Solr**, para filtrar el stock bajo desde la búsqueda. Necesitaba un campo por sucursal y reindexar el producto con cada reserva, confirmación o ajuste. El stock ya está en MySQL y la consulta de stock bajo de una sucursal es simple, así que la dejamos ahí.
 
 ## Consecuencias
-- Siempre hay que escribir un texto para buscar. Los resultados vienen ordenados solo por relevancia y no hay páginas: si hay más resultados que el `limit`, hay que afinar la búsqueda.
+- Siempre hay que escribir un texto para buscar. Los resultados vienen ordenados solo por relevancia: no se puede ordenar, por ejemplo, por nombre.
+- Si se modifica un producto mientras alguien pasa de página, un resultado puede aparecer en dos páginas o no aparecer. Lo aceptamos, porque el catálogo cambia poco.
 - La búsqueda solo se actualiza cuando cambia un producto, no con cada movimiento de stock, así que el indexador tiene poco trabajo.
 - Si un evento se pierde, el documento queda desactualizado hasta el próximo cambio de ese producto o hasta que corramos la reconstrucción.
 - Hay un proceso más que mantener (el indexador) y uno de reconstrucción que hay que probar.

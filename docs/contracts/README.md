@@ -2,6 +2,8 @@
 
 Le ofrecemos al otro grupo consultar nuestro catálogo de productos y el stock disponible de cada sucursal. Son solo lecturas: no se puede crear ni modificar nada. El contrato completo está en [openapi.yaml](openapi.yaml) y las decisiones detrás están en [ADR-017](../adr/ADR-017-contrato-propio.md).
 
+**Versión vigente: 1.0.0**, la misma que figura en `info.version` de [openapi.yaml](openapi.yaml).
+
 ## Operaciones
 
 | Método y ruta | Para qué |
@@ -13,6 +15,7 @@ Le ofrecemos al otro grupo consultar nuestro catálogo de productos y el stock d
 | `GET /api/branches/{branchId}/products/{productId}/stock` | Ver el stock disponible de un producto en una sucursal |
 
 Algunas aclaraciones:
+- Las sucursales se identifican por su `branchId`. Con los datos de prueba hay tres: 1, 2 y 3. Si sumamos o sacamos sucursales, actualizamos esta lista y le avisamos al grupo consumidor, así no tiene que usar ningún otro servicio nuestro para conocerlas.
 - El stock que devolvemos (`quantity`) es el **disponible**: el total menos las unidades reservadas para transferencias a otras sucursales que todavía no llegaron a destino. Por ejemplo, si una sucursal tiene 46 unidades y 4 están reservadas, devolvemos 42.
 - Si una sucursal no tiene stock cargado, la consulta de su stock devuelve una lista vacía.
 - Si un producto existe pero no tiene stock en esa sucursal, la cantidad viene en 0.
@@ -21,6 +24,8 @@ Algunas aclaraciones:
 ## Autenticación
 
 Le creamos al grupo consumidor una cuenta con el rol `INTEGRACION`, que solo puede hacer estas consultas. El email y la contraseña los pasamos por privado, no están en el repositorio.
+
+Todo entra por nuestro gateway. El login lo resuelve el servicio de Usuarios y el token lo valida el gateway antes de pasarle la consulta a Inventario, así que Inventario no maneja usuarios ni tokens. Lo incluimos en este contrato porque el consumidor necesita el token para hacer las consultas.
 
 1. Hacer login con esa cuenta y guardar el `token` de la respuesta.
 2. Mandarlo en todas las consultas en el header `Authorization: Bearer <token>`.
@@ -76,8 +81,18 @@ Respuesta:
 
 ## Dónde probarlo
 
-Los ejemplos usan `http://localhost:8080`, que es el gateway cuando el sistema se levanta con `docker compose up`. Cuando Inventario esté desplegado, agregamos acá su URL pública.
+Los ejemplos usan `http://localhost:8080`, que es el gateway cuando el sistema se levanta con `docker compose up`.
 
 ## Cambios en el contrato
 
 Solo hacemos cambios que no rompan lo que ya usa el otro grupo, como agregar operaciones o campos nuevos en las respuestas. No sacamos ni renombramos campos, ni cambiamos su tipo o su significado. Si alguna vez hiciera falta un cambio así, lo acordamos antes con el grupo consumidor. Conviene que el consumidor ignore los campos que no conoce, así un campo nuevo no le rompe nada.
+
+Cada cambio sube la versión de `info.version` y queda anotado en la tabla de abajo:
+
+- si agregamos una operación o un campo, sube el número del medio (de 1.0.0 a 1.1.0);
+- si solo corregimos la documentación, sin cambiar lo que responde la API, sube el último (de 1.0.0 a 1.0.1);
+- si alguna vez tuviéramos que hacer un cambio que rompa lo que ya usa el otro grupo, primero lo acordamos con ellos y el contrato pasa a la 2.0.0.
+
+| Versión | Qué cambió |
+|---|---|
+| 1.0.0 | Versión inicial: login, listado y detalle de productos, stock de una sucursal y stock de un producto en una sucursal |
