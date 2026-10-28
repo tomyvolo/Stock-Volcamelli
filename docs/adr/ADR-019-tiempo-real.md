@@ -31,7 +31,7 @@ Para esta ruta el gateway no corta la conexión por timeout y reenvía cada mens
 - Cuando vence el token (1 hora), Tiempo Real cierra la conexión y el usuario vuelve a iniciar sesión, como en el resto del sistema.
 
 ### Quién recibe qué
-Todos los usuarios conectados, sea cual sea su rol, reciben todos los eventos, y el frontend filtra lo que muestra. `INTEGRACION` no puede usar `/api/events`.
+Todos los usuarios conectados, sea cual sea su rol, reciben todos los eventos, y el frontend filtra lo que muestra.
 
 ## Consecuencias
 - Es un servicio más y una ruta más en el gateway, que además tiene que soportar conexiones largas.

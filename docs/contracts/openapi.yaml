@@ -1,66 +1,22 @@
 openapi: 3.1.0
 info:
   title: Stock Volcamelli - Inventario
-  version: 1.0.0
+  version: 2.0.0
   description: >-
     Consultas del catálogo de productos y del stock disponible por sucursal de Stock Volcamelli.
-    Todas las operaciones son de lectura y requieren un token que se obtiene con el login.
+    Todas las operaciones son de lectura y requieren la API key del grupo consumidor en el header X-API-Key.
+    Cada respuesta trae el header X-Track-ID, que identifica el pedido en nuestros logs.
 servers:
-  - url: http://localhost:8080
-    description: Gateway levantado con Docker Compose
+  - url: https://stock-volcamelli-inventario.onrender.com
+    description: Inventario publicado
 security:
-  - bearerAuth: []
+  - apiKeyAuth: []
 tags:
-  - name: Auth
-    description: Obtener el token
   - name: Productos
     description: Catálogo de productos
   - name: Stock
     description: Stock disponible por sucursal
 paths:
-  /api/auth/login:
-    post:
-      tags: [Auth]
-      operationId: login
-      summary: Obtener un token
-      description: >-
-        Se hace con la cuenta que le damos al grupo consumidor. El token dura 1 hora;
-        cuando vence, hay que volver a hacer login.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginInput'
-            example:
-              email: integracion@grupo-consumidor.com
-              password: una-clave-de-ejemplo
-      responses:
-        '200':
-          description: Login correcto.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Token'
-              example:
-                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ejemplo.firma
-                expiresIn: 3600
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '401':
-          description: Email o contraseña incorrectos.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                code: INVALID_CREDENTIALS
-                message: El email o la contraseña son incorrectos.
-        '500':
-          $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/products:
     get:
       tags: [Productos]
@@ -93,12 +49,8 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/products/{productId}:
     parameters:
       - $ref: '#/components/parameters/ProductId'
@@ -122,14 +74,10 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ProductNotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/branches/{branchId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
@@ -177,12 +125,8 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/branches/{branchId}/products/{productId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
@@ -208,20 +152,17 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ProductNotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: La API key que le pasamos al grupo consumidor por un medio privado.
   parameters:
     BranchId:
       name: branchId
@@ -269,23 +210,14 @@ components:
             code: INVALID_REQUEST
             message: El parámetro page tiene que ser un número mayor a 0.
     Unauthorized:
-      description: Falta el token, no es válido o venció.
+      description: Falta la API key o no es válida.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
           example:
             code: UNAUTHORIZED
-            message: Falta el token o venció. Volvé a hacer login.
-    Forbidden:
-      description: El token es válido, pero el rol no tiene permiso para esta operación.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: FORBIDDEN
-            message: No tenés permiso para esta operación.
+            message: Falta la API key o no es válida.
     ProductNotFound:
       description: El producto no existe.
       content:
@@ -304,35 +236,7 @@ components:
           example:
             code: INTERNAL_ERROR
             message: Ocurrió un error inesperado. Probá de nuevo en unos minutos.
-    ServiceUnavailable:
-      description: Inventario no está disponible en este momento.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: SERVICE_UNAVAILABLE
-            message: El servicio no está disponible. Probá de nuevo en unos minutos.
   schemas:
-    LoginInput:
-      type: object
-      required: [email, password]
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-          minLength: 1
-    Token:
-      type: object
-      required: [token, expiresIn]
-      properties:
-        token:
-          type: string
-        expiresIn:
-          type: integer
-          description: Segundos hasta que vence el token.
     Product:
       type: object
       required: [id, name]

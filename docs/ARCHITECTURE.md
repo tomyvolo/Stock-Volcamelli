@@ -47,7 +47,7 @@ Elegimos Go para todos los servicios y para el gateway, así todo el equipo trab
 Es la única puerta de entrada al sistema, tanto para nuestro frontend como para el grupo que consume nuestro catálogo. Lo hacemos nosotros en Go con Gin y no tiene lógica de negocio ni base de datos. Hace tres cosas:
 
 1. **Valida el token.** Todos los pedidos, salvo el login, tienen que traer un JWT en `Authorization: Bearer <token>`. El gateway verifica la firma y que no esté vencido. Si falla, responde `401` y el pedido no llega a ningún servicio. El token lo emite Usuarios en el login.
-2. **Controla los permisos por rol.** Si el rol no puede hacer esa operación, responde `403`. Por ejemplo, `INTEGRACION` solo puede usar las consultas del contrato, y los ajustes de stock no los puede hacer un `VENDEDOR`. Al servicio le pasa el id, el rol y la sucursal del usuario, sacados del token, en los headers `X-User-ID`, `X-User-Role` y `X-User-Branch`. El control por sucursal (que la transferencia pase por la sucursal del vendedor, por ejemplo) lo hace cada servicio, porque necesita los datos del pedido.
+2. **Controla los permisos por rol.** Si el rol no puede hacer esa operación, responde `403`. Por ejemplo, los ajustes de stock no los puede hacer un `VENDEDOR`. Al servicio le pasa el id, el rol y la sucursal del usuario, sacados del token, en los headers `X-User-ID`, `X-User-Role` y `X-User-Branch`. El control por sucursal (que la transferencia pase por la sucursal del vendedor, por ejemplo) lo hace cada servicio, porque necesita los datos del pedido.
 3. **Redirige cada pedido al servicio que corresponde**, según la ruta:
 
    | Ruta | Servicio |
@@ -67,18 +67,17 @@ Las llamadas entre servicios no pasan por el gateway: van directo de un servicio
 ## 4. Los servicios
 
 ### Usuarios
-Guarda los usuarios con su email, contraseña (hasheada), rol y sucursal. Hace el login y emite el JWT, que dura 1 hora y lleva el id del usuario, su email, su rol y su sucursal. Si a un usuario le cambian el rol o la sucursal, se aplica cuando vuelve a hacer login. Hay cuatro roles:
+Guarda los usuarios con su email, contraseña (hasheada), rol y sucursal. Hace el login y emite el JWT, que dura 1 hora y lleva el id del usuario, su email, su rol y su sucursal. Si a un usuario le cambian el rol o la sucursal, se aplica cuando vuelve a hacer login. Hay tres roles:
 
 | Rol | Sucursal | Qué puede hacer |
 |---|---|---|
 | `DIRECTOR` | Ninguna | Todo, en todas las sucursales: transferencias, ajustes, usuarios de cualquier rol, sucursales y productos |
 | `ADMIN_SUCURSAL` | Una | Lo del vendedor, más ajustes de stock en su sucursal y alta de vendedores de su sucursal |
 | `VENDEDOR` | Una | Consulta todo. Crea, cancela y responde los horarios de las transferencias que salen de su sucursal o llegan a ella |
-| `INTEGRACION` | Ninguna | Es la cuenta del grupo que consume nuestro catálogo, y solo puede usar las consultas del contrato |
 
 El alta de usuarios es `POST /api/create-users`, con nombre, email, contraseña, rol y sucursal. El gateway solo la deja pasar con el token de un `DIRECTOR` o un `ADMIN_SUCURSAL`, y Usuarios controla el resto de las reglas: el admin solo crea vendedores de su sucursal, el admin y el vendedor necesitan sucursal y el director y la integración no llevan, y el email no se puede repetir (`409`). La contraseña se guarda hasheada con bcrypt y nunca se devuelve.
 
-Todos los usuarios, salvo `INTEGRACION`, pueden ver la lista de usuarios de cada sucursal con su nombre, email y rol (`GET /api/users?branchId=3`). La contraseña nunca sale de Usuarios. Esa lista se guarda en caché ([ADR-007](adr/ADR-007-cache.md)).
+Todos los usuarios pueden ver la lista de usuarios de cada sucursal con su nombre, email y rol (`GET /api/users?branchId=3`). La contraseña nunca sale de Usuarios. Esa lista se guarda en caché ([ADR-007](adr/ADR-007-cache.md)).
 
 ### Sucursales
 Guarda las sucursales con su nombre y dirección. La dirección hace falta porque Rumbo la pide para cada traslado. Los datos de las sucursales se guardan en caché, porque casi nunca cambian y los piden todas las pantallas y Transferencias en cada transferencia ([ADR-007](adr/ADR-007-cache.md)).
@@ -194,7 +193,7 @@ Los estados de una transferencia son:
 
 ## 9. Integración con otros grupos
 
-**Lo que ofrecemos.** El otro grupo puede consultar el catálogo y el stock disponible de Inventario: listar productos, ver un producto, el stock de una sucursal y el stock de un producto en una sucursal. Entra por el gateway con la cuenta `INTEGRACION`. El contrato está en [contracts/README.md](contracts/README.md) y la decisión en [ADR-017](adr/ADR-017-contrato-propio.md).
+**Lo que ofrecemos.** El otro grupo puede consultar el catálogo y el stock disponible de Inventario: listar productos, ver un producto, el stock de una sucursal y el stock de un producto en una sucursal. Consulta directo a Inventario publicado en la nube, sin pasar por el gateway, con una API key en el header `X-API-Key`. En la nube corre solo Inventario, con su MySQL. El contrato está en [contracts/README.md](contracts/README.md) y la decisión en [ADR-017](adr/ADR-017-contrato-propio.md).
 
 **Lo que usamos.** De Rumbo usamos toda la funcionalidad de su contrato:
 - pedir el token;

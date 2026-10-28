@@ -37,7 +37,7 @@ El sistema permite:
 | Director general (`DIRECTOR`) | Ve y opera todas las sucursales: transferencias, ajustes, usuarios, sucursales y productos. No tiene sucursal asignada |
 | Admin de sucursal (`ADMIN_SUCURSAL`) | Lo mismo que el vendedor, más ajustes de stock en su sucursal y alta de vendedores de su sucursal |
 | Vendedor (`VENDEDOR`) | Consulta productos, stock, sucursales y usuarios de todas las sucursales. Crea, cancela y responde los horarios de las transferencias que salen de su sucursal o llegan a ella |
-| Grupo consumidor (`INTEGRACION`) | Otro sistema que consulta nuestro catálogo y stock. Solo puede leer |
+| Grupo consumidor | Otro sistema que consulta nuestro catálogo y stock con una API key. Solo puede leer |
 | Rumbo | Servicio de transporte de otro grupo. Recibe nuestros pedidos de traslado, los acepta, propone otro horario o los rechaza, y hace el viaje |
 
 ## 5. Entidades
@@ -45,8 +45,8 @@ El sistema permite:
 ### User
 Un usuario del sistema.
 - id, nombre, email, contraseña (guardada con hash), rol, sucursal.
-- Rol: `DIRECTOR`, `ADMIN_SUCURSAL`, `VENDEDOR` o `INTEGRACION`.
-- La sucursal es obligatoria para `ADMIN_SUCURSAL` y `VENDEDOR`, y queda vacía para `DIRECTOR` e `INTEGRACION`.
+- Rol: `DIRECTOR`, `ADMIN_SUCURSAL` o `VENDEDOR`.
+- La sucursal es obligatoria para `ADMIN_SUCURSAL` y `VENDEDOR`, y queda vacía para `DIRECTOR`.
 - Cualquier usuario puede ver nombre, email, rol y sucursal de los demás. La contraseña nunca se muestra.
 
 ### Branch
@@ -115,7 +115,7 @@ Son finales `SIN_STOCK`, `FALLIDA`, `COMPLETADA`, `RECHAZADA`, `CANCELADA` y `NO
 12. Una transferencia se puede cancelar mientras el traslado no esté en curso. Si faltan menos de 24 horas para la llegada, la cancelación depende de que Rumbo la apruebe.
 13. Si no pudimos mandarle el pedido a Rumbo en 24 horas, la transferencia queda `RECHAZADA`.
 14. Un producto tiene stock bajo cuando le quedan 5 unidades disponibles o menos en una sucursal.
-15. La cuenta `INTEGRACION` solo puede usar las consultas del contrato.
+15. El grupo consumidor solo puede usar las consultas del contrato, con su API key.
 16. El vendedor y el admin de sucursal solo pueden crear, cancelar y responder los horarios de las transferencias que salen de su sucursal o llegan a ella. El director puede hacerlo con cualquiera.
 17. El director da de alta usuarios de cualquier rol, sucursales y productos. El admin de sucursal solo da de alta vendedores de su sucursal.
 18. La sucursal y el rol de un usuario van dentro de su token. Si cambian, se aplican cuando vuelve a hacer login.
@@ -192,7 +192,7 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 **CA-24 — Cambio de sucursal.** Dado un vendedor que pasa de la sucursal 3 a la 5, cuando vuelve a hacer login, entonces puede operar las transferencias de la 5 y ya no las de la 3.
 
-**CA-25 — Cuenta de integración.** La cuenta `INTEGRACION` puede consultar productos y stock, pero no puede ver usuarios, crear transferencias ni modificar nada.
+**CA-25 — Acceso del grupo consumidor.** Con su API key, el grupo consumidor puede consultar productos y stock. Sin la API key, o con una incorrecta, recibe `401`. No puede ver usuarios, crear transferencias ni modificar nada.
 
 ### Búsqueda, caché y balanceo
 

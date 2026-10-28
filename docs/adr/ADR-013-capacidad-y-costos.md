@@ -42,7 +42,7 @@ Por cada corrida: p95, pedidos por segundo y porcentaje de errores (del generado
 
 **Versión:** `main` en `2c5d0fd`, levantada desde cero con `docker compose up --build -d`.
 
-**Ruta:** `GET /api/branches/1/stock` (stock de una sucursal, consulta del contrato), con el token de la cuenta `INTEGRACION`. Cada corrida dura 20 segundos, después de 5 segundos de calentamiento.
+**Ruta:** `GET /api/branches/1/stock` (stock de una sucursal, consulta del contrato), con un token válido. Cada corrida dura 20 segundos, después de 5 segundos de calentamiento.
 
 ### Dos instancias de Inventario
 | Workers | Pedidos por segundo | p50 | p95 | p99 | Errores |

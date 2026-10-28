@@ -5,7 +5,7 @@ Muestra las piezas del sistema y cómo se comunican.
 ```mermaid
 flowchart TB
     U["Director / Admin de sucursal / Vendedor"]
-    C["Grupo consumidor<br/>INTEGRACION"]
+    C["Grupo consumidor<br/>con API key"]
     F["Frontend<br/>React"]
     G["API Gateway<br/>Go + Gin"]
     US["Usuarios<br/>Go, capas"]
@@ -27,7 +27,7 @@ flowchart TB
     LLM["Modelo de lenguaje<br/>proveedor externo"]
 
     U --> F --> G
-    C -->|"Login y consultas"| G
+    C -->|"Consultas con X-API-Key"| I
     G --> US
     G --> BS
     G --> TS
