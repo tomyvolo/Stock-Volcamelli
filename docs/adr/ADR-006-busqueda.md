@@ -11,7 +11,7 @@ Usamos Solr, que resuelve búsqueda por texto, filtros y relevancia, y desde Go 
 ## Decisión
 
 ### Qué se busca
-La búsqueda es solo para nuestro frontend: la pueden usar todos los roles salvo `INTEGRACION`. No forma parte del contrato que le ofrecemos al otro grupo, así que `INTEGRACION` recibe `403`.
+La búsqueda es solo para nuestro frontend: la pueden usar todos los roles. No forma parte del contrato que le ofrecemos al otro grupo.
 
 `GET /api/products/search`
 

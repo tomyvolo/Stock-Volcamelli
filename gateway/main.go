@@ -52,9 +52,9 @@ func main() {
 	// El login no pide token.
 	api.POST("/auth/login", gatewayProxy.Forward("usuarios", usersURL))
 
-	// Las consultas del contrato: las puede usar cualquier rol, también INTEGRACION.
-	// Las rutas que no son del contrato van en otro grupo, sin INTEGRACION en RoleRequired.
-	contract := api.Group("").Use(utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR", "INTEGRACION"))
+	// Las consultas de Inventario: las puede usar cualquier rol. El grupo consumidor no entra por acá,
+	// consulta directo a Inventario publicado con su API key.
+	contract := api.Group("").Use(utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR"))
 	contract.GET("/products", gatewayProxy.Forward("inventario", inventoryURL))
 	contract.GET("/products/:productId", gatewayProxy.Forward("inventario", inventoryURL))
 	contract.GET("/branches/:branchId/stock", gatewayProxy.Forward("inventario", inventoryURL))

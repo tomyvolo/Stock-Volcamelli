@@ -61,18 +61,18 @@ La primera vez tarda un par de minutos, porque los MySQL cargan sus tablas y dat
 | Grafana (usuario `admin`, contraseña la de `GRAFANA_ADMIN_PASSWORD`) | `http://localhost:3000`, tablero "Stock Volcamelli" |
 | Prometheus | `http://localhost:9090` |
 
-Hay un usuario de prueba por rol: `director@volcamelli.com`, `admin1@volcamelli.com`, `vendedor1@volcamelli.com` e `integracion@volcamelli.com`. Las contraseñas no están en el repositorio; las tiene el equipo.
+Hay un usuario de prueba por rol: `director@volcamelli.com`, `admin1@volcamelli.com`, y `vendedor1@volcamelli.com`. Las contraseñas no están en el repositorio; las tiene el equipo.
 
 Para empezar de cero (borra los datos de los MySQL): `docker compose down -v`.
 
 ### Cómo probarlo
 
-Con todo levantado, se hace login y se usa el token en las consultas del contrato ([docs/contracts/README.md](docs/contracts/README.md) tiene todas):
+Con todo levantado, se hace login y se usa el token en las consultas de Inventario:
 
 ```bash
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email": "integracion@volcamelli.com", "password": "..."}'
+  -d '{"email": "vendedor1@volcamelli.com", "password": "..."}'
 
 curl -i http://localhost:8080/api/branches/1/stock \
   -H "Authorization: Bearer <token>"

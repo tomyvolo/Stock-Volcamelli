@@ -29,7 +29,7 @@ Para que un modelo de lenguaje opere el sistema usamos MCP (Model Context Protoc
 | `estado_transferencia` | Estado y detalle de una transferencia | `GET /api/transfers/{id}` |
 
 ### Permisos
-El servidor MCP llama al gateway con **el token del usuario que está chateando**. El asistente no tiene permisos propios: puede hacer exactamente lo que puede hacer ese usuario, y se aplican los mismos controles que a cualquier otro pedido: el gateway controla el rol y Transferencias controla la sucursal. Por ejemplo, un vendedor no puede crear por chat una transferencia que no sale de su sucursal ni llega a ella. La cuenta `INTEGRACION` no puede usar el asistente.
+El servidor MCP llama al gateway con **el token del usuario que está chateando**. El asistente no tiene permisos propios: puede hacer exactamente lo que puede hacer ese usuario, y se aplican los mismos controles que a cualquier otro pedido: el gateway controla el rol y Transferencias controla la sucursal. Por ejemplo, un vendedor no puede crear por chat una transferencia que no sale de su sucursal ni llega a ella.
 
 ### Confirmación antes de crear
 `crear_transferencia` es la única herramienta que cambia algo. Cuando el modelo la pide, el Asistente no la ejecuta: le devuelve al frontend la tarjeta con producto, cantidad, origen y destino. Solo si el usuario toca Confirmar, el Asistente ejecuta la herramienta. Así un error del modelo nunca crea una transferencia que el usuario no vio.

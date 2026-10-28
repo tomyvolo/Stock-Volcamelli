@@ -17,6 +17,7 @@ import (
 	stockRepo "inventario/repositories/stock"
 	productsServices "inventario/services/products"
 	stockServices "inventario/services/stock"
+	"inventario/utils"
 )
 
 const stage = "inventario"
@@ -47,7 +48,7 @@ func main() {
 	router.GET("/health", controllers.Health)
 
 	api := router.Group("/api")
-	api.Use(observability.RecordMetrics, observability.ReadTrackID)
+	api.Use(observability.RecordMetrics, observability.ReadTrackID, utils.APIKeyRequired())
 
 	// Las 4 consultas del contrato (docs/contracts/openapi.yaml).
 	api.GET("/products", productsController.List)
@@ -58,6 +59,9 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8082"
+	}
+	if os.Getenv("INVENTARIO_API_KEY") == "" {
+		log.Print("sin INVENTARIO_API_KEY: las consultas no piden API key, así que solo se puede usar detrás del gateway")
 	}
 	logStore.Write("", stage, "info", "inventario iniciado en el puerto "+port)
 	log.Printf("inventario listo en :%s", port)

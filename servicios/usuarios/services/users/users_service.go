@@ -14,7 +14,7 @@ var (
 	ErrInvalidCredentials = errors.New("credenciales inválidas")
 	ErrInvalidRole        = errors.New("el rol no existe")
 	ErrBranchRequired     = errors.New("el admin de sucursal y el vendedor necesitan una sucursal")
-	ErrBranchNotAllowed   = errors.New("el director y la integración no llevan sucursal")
+	ErrBranchNotAllowed   = errors.New("el director no lleva sucursal")
 	ErrNotAllowed         = errors.New("no tiene permiso para crear este usuario")
 	ErrEmailTaken         = errors.New("ya existe un usuario con ese email")
 )
@@ -24,7 +24,6 @@ const (
 	RoleDirector      = "DIRECTOR"
 	RoleAdminSucursal = "ADMIN_SUCURSAL"
 	RoleVendedor      = "VENDEDOR"
-	RoleIntegracion   = "INTEGRACION"
 )
 
 type UsersService struct {
@@ -62,7 +61,7 @@ func (s *UsersService) CreateUser(creatorRole string, creatorBranch *uint, user 
 		if user.BranchID == nil {
 			return users.UserModel{}, ErrBranchRequired
 		}
-	case RoleDirector, RoleIntegracion:
+	case RoleDirector:
 		if user.BranchID != nil {
 			return users.UserModel{}, ErrBranchNotAllowed
 		}
