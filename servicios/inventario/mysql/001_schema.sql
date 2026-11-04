@@ -1,4 +1,7 @@
 -- La imagen oficial de MySQL ejecuta este archivo cuando el volumen se crea por primera vez.
+-- El archivo está en UTF-8; sin esto MySQL lo lee como latin1 y guarda mal las tildes.
+SET NAMES utf8mb4;
+
 CREATE TABLE IF NOT EXISTS products (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
@@ -18,6 +21,43 @@ CREATE TABLE IF NOT EXISTS stock (
     INDEX idx_stock_branch (branch_id),
     CONSTRAINT fk_stock_product FOREIGN KEY (product_id) REFERENCES products (id),
     CONSTRAINT chk_stock_reserved CHECK (reserved <= total)
+);
+
+-- Una reserva por transferencia, identificada por el id que le dio Transferencias.
+-- Si un pedido de liberar llega antes que el de reservar, se guarda directo como LIBERADA,
+-- sin producto ni sucursales, para rechazar la reserva si llega tarde.
+CREATE TABLE IF NOT EXISTS reservations (
+    transfer_id VARCHAR(64) NOT NULL PRIMARY KEY,
+    product_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    origin_branch_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    destination_branch_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    quantity INT UNSIGNED NOT NULL DEFAULT 0,
+    status ENUM('ACTIVA', 'CONFIRMADA', 'LIBERADA') NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Cada cambio en el total de stock deja un movimiento.
+-- reason dice de dónde vino; description es el motivo que escribió quien hizo el ajuste.
+CREATE TABLE IF NOT EXISTS stock_movements (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    product_id BIGINT UNSIGNED NOT NULL,
+    branch_id BIGINT UNSIGNED NOT NULL,
+    type ENUM('ENTRADA', 'SALIDA') NOT NULL,
+    quantity INT UNSIGNED NOT NULL,
+    resulting_total INT UNSIGNED NOT NULL,
+    reason ENUM('AJUSTE', 'TRANSFERENCIA') NOT NULL,
+    description VARCHAR(200) NOT NULL DEFAULT '',
+    transfer_id VARCHAR(64) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_movements_product_branch (product_id, branch_id, id)
+);
+
+-- Los eventos de Transferencias que ya procesamos. Si RabbitMQ entrega uno repetido, lo ignoramos.
+CREATE TABLE IF NOT EXISTS processed_events (
+    event_id VARCHAR(64) NOT NULL PRIMARY KEY,
+    type VARCHAR(40) NOT NULL,
+    processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Datos de prueba: 10 productos en las sucursales 1, 2 y 3.
@@ -57,3 +97,7 @@ INSERT INTO stock (product_id, branch_id, total, reserved) VALUES
     (10, 1, 50, 0),
     (10, 2, 12, 0),
     (10, 3, 1, 0);
+
+-- Las 4 unidades reservadas de Harina 000 en la sucursal 1 son de esta transferencia de ejemplo a la sucursal 2.
+INSERT INTO reservations (transfer_id, product_id, origin_branch_id, destination_branch_id, quantity, status) VALUES
+    ('ejemplo-0001', 1, 1, 2, 4, 'ACTIVA');
