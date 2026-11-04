@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS app_logs (
     INDEX idx_app_logs_stage (stage)
 );
 
--- Grafana solo necesita leer los logs. El usuario demo de la app puede escribirlos.
+-- Grafana solo necesita leer los logs. El usuario de la app puede escribirlos.
+-- MySQL corre este archivo dentro de la base de logs, así que app_logs no lleva el nombre de la base.
 CREATE USER IF NOT EXISTS 'grafana_reader'@'%' IDENTIFIED BY 'grafana_demo';
-GRANT SELECT ON observabilidad.app_logs TO 'grafana_reader'@'%';
+GRANT SELECT ON app_logs TO 'grafana_reader'@'%';

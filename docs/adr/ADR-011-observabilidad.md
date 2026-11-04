@@ -1,10 +1,10 @@
 # ADR-011 — Observabilidad (D11)
 
 ## Estado
-Propuesto. Es la primera versión: los umbrales los ajustamos con las pruebas de carga.
+Aceptado. Los objetivos de servicio se contrastaron con las pruebas de carga de [ADR-013](ADR-013-capacidad-y-costos.md): se cumplen hasta unas 500 consultas por segundo en la máquina de prueba.
 
 ## Contexto
-Un pedido puede pasar por el gateway, NGINX, Inventario y Transferencias, y una transferencia sigue viva en procesos de fondo durante días. Cuando algo falla, necesitamos poder seguir un pedido entre servicios, saber en qué servicio falló, saber si el sistema anda bien sin mirar log por log y enterarnos de un problema antes de que nos lo diga un usuario.
+Nuestro flujo principal, la consulta de stock, atraviesa el gateway, NGINX y una de las dos instancias de Inventario, que lee MySQL. Una transferencia pasa además por Transferencias y Sucursales, y sigue viva en procesos de fondo durante días. Cuando algo falla, necesitamos poder seguir un pedido entre servicios, saber en qué servicio y en qué instancia falló, saber si el sistema anda bien sin mirar log por log y enterarnos de un problema antes de que nos lo diga un usuario.
 
 ## Decisión
 
@@ -35,14 +35,14 @@ Cada pedido tiene un único id de correlación, el **TrackID**, desde que entra 
 - El middleware `AddTrackID` del gateway corre antes que cualquier otra cosa. Genera 16 bytes aleatorios y los escribe como 32 caracteres hexadecimales. Si no puede generarlo, responde `500`.
 - Lo guarda en el contexto de Gin con `ctx.Set("track_id", ...)`, para que el resto del gateway lo lea con `ctx.GetString("track_id")`, y lo devuelve en el header `X-Track-ID` de la respuesta. Así, si el otro grupo o un usuario reporta un problema, nos puede dar el TrackID de ese pedido.
 - Se lo pasa al servicio en el mismo header `X-Track-ID`. Los servicios nunca generan uno: un middleware lo lee del header y lo deja en el contexto, y lo pasan igual en cada llamada a otro servicio (incluidas las que pasan por NGINX) y en los eventos de RabbitMQ, como un header del mensaje.
-- Transferencias guarda en cada transferencia el TrackID del pedido que la creó. Todo lo que pasa después con esa transferencia en segundo plano (mandarla a Rumbo, cada cambio de estado, los eventos a Inventario) se registra con ese mismo TrackID, así la vida completa de una transferencia se sigue con un solo id.
+- Transferencias guarda en cada transferencia el TrackID del pedido que la creó. Todo lo que pasa después con esa transferencia en segundo plano (mandarla a Rumbo, cada cambio de estado, los eventos a Inventario) se registra con ese mismo TrackID, así su vida completa se sigue con una sola traza.
 
 ### Logs
 Cada servicio guarda sus logs directo en una tabla de MySQL, y Grafana los lee de ahí.
 
 - **El MySQL de logs** es un contenedor aparte, solo para esto. No usamos la base de ningún servicio, porque los logs se escriben todo el tiempo y le sacarían capacidad al negocio. Cuando el volumen es nuevo, la imagen de MySQL corre `001_schema.sql`, que crea la tabla y un usuario `grafana_reader` que solo puede hacer `SELECT` sobre ella. Los datos quedan en un volumen de Docker.
 - **Cada servicio tiene un paquete `logs`** con dos funciones. `Connect` abre la conexión con GORM (los datos llegan por la variable de entorno `MYSQL_DSN`) y corre `AutoMigrate` sobre `app_logs`. `Write(trackID, stage, level, message)` guarda una fila con `db.Table("app_logs").Create(...)`.
-- **Si el MySQL de logs falla**, `Write` escribe un aviso por consola con `log.Printf` y el pedido sigue: el log se puede ver con `docker compose logs <servicio>`, pero no aparece en Grafana.
+- **Si el MySQL de logs falla o se queda sin conexiones**, `Write` escribe un aviso por consola con `log.Printf` y el pedido sigue: el log se puede ver con `docker compose logs <servicio>`, pero no aparece en Grafana.
 - **Cada servicio espera a que el MySQL de logs esté listo** antes de arrancar (`depends_on` con `condition: service_healthy` en el Compose), porque necesita la conexión para escribir.
 
 La tabla `app_logs`:
@@ -65,28 +65,21 @@ Qué va en el mensaje:
 - Nunca contraseñas, tokens ni las credenciales de Rumbo.
 
 ### Trazas
-La traza de un pedido son sus logs: todas las filas de `app_logs` con su TrackID, ordenadas por `created_at`. Cada servicio escribe un log al recibir el pedido, en cada paso importante (llamar a otro servicio o a Rumbo, usar la base, Memcached o Solr) y al responder.
 
-Por ejemplo, la traza de crear una transferencia:
+La traza distribuida del flujo principal corresponde a la consulta de Inventario: `GET /api/branches/{branchId}/stock`. El gateway genera un TrackID, lo devuelve en `X-Track-ID` y lo reenvía a través de NGINX. Inventario conserva ese valor en sus logs. Las filas de `app_logs` con el mismo `track_id` permiten correlacionar lo registrado por el gateway y por Inventario:
 
 ```sql
 SELECT created_at, stage, level, message
 FROM app_logs
-WHERE track_id = 'a1b2...'
+WHERE track_id = '<X-Track-ID de la respuesta>'
 ORDER BY created_at, id;
 ```
 
-| created_at | stage | level | message |
-|---|---|---|---|
-| 14:03:12.001 | gateway | info | pedido recibido POST /api/transfers |
-| 14:03:12.025 | transferencias | info | sucursales 3 y 7 consultadas en 20 ms |
-| 14:03:12.096 | inventario | info | reserva creada para la transferencia 42 en 70 ms |
-| 14:03:12.112 | transferencias | info | transferencia 42 guardada como RESERVADA |
-| 14:03:12.121 | gateway | info | respuesta 201 en 120 ms |
+En una consulta exitosa, los logs registran la recepción del pedido en el gateway, el resultado de la consulta de stock en Inventario y la respuesta del gateway. El tiempo que registra Inventario corresponde a la atención de la operación en el controlador; los logs no separan la duración de la consulta MySQL. Si el gateway rechaza el pedido antes de reenviarlo, o no llega a Inventario, puede faltar la fila de Inventario.
 
-Se ve por qué servicios pasó el pedido, en qué orden y cuánto tardó cada paso. Si falla, la última fila tiene `level = error` y `stage` dice en qué servicio se cortó; los servicios que venían después no aparecen. Nuestros flujos hacen las llamadas una detrás de otra, así que el orden por fecha alcanza para reconstruir el recorrido.
+NGINX también recibe el mismo `X-Track-ID`, pero escribe `track_id` e `instancia` en su **access log**. Para identificar cuál de las dos instancias atendió un pedido concreto hay que consultar `docker compose logs nginx` y buscar ese TrackID. Ese registro de NGINX no se guarda en `app_logs` y no aparece en el panel de logs de Grafana. Grafana sí muestra los logs correlacionados del gateway y de Inventario y métricas agregadas por instancia, que no identifican la instancia de un TrackID individual.
 
-La primera traza que mostramos es la de una consulta del contrato (gateway → NGINX → Inventario → MySQL), que es lo primero que va a estar andando. Cuando esté Transferencias, la del flujo principal: crear una transferencia.
+
 
 ### Métricas
 Cada servicio tiene el middleware `RecordMetrics` en su grupo de rutas. Toma la hora, deja que Gin ejecute el controller con `ctx.Next()`, y al volver registra dos métricas con las etiquetas `route` (la ruta, por ejemplo `/api/branches/:branchId/stock`) y `status` (el código HTTP):
@@ -111,7 +104,7 @@ Además, con el mismo tipo de contador:
 Los ids del negocio van en los logs, nunca como etiquetas: con una etiqueta por transferencia, Prometheus guardaría una serie por cada una.
 
 ### Tablero
-Un tablero en Grafana. Arriba tiene un campo de texto **TrackID**: vacío muestra todos los logs, y con un TrackID pegado filtra los paneles de logs y muestra la traza de ese pedido. Las métricas no se filtran, siguen sumando todos los pedidos.
+Un tablero en Grafana. Arriba tiene un campo de texto **TrackID**: vacío muestra todos los logs, y con un TrackID pegado filtra los paneles de logs y muestra la traza de ese pedido, del primer paso al último. Las métricas no se filtran, siguen sumando todos los pedidos.
 
 | Panel | De dónde sale |
 |---|---|
@@ -119,6 +112,7 @@ Un tablero en Grafana. Arriba tiene un campo de texto **TrackID**: vacío muestr
 | Duración media y p95 por ruta | Prometheus, `request_duration_seconds` |
 | Porcentaje de respuestas `5xx` | Prometheus, `requests_total` |
 | Pedidos por instancia de Inventario | Prometheus, `requests_total` por `instance` |
+| Estado de las instancias de Inventario (levantada o caída) | Prometheus, `up` de cada instancia |
 | Porcentaje de aciertos de la caché | Prometheus, contadores de la caché |
 | Mensajes a la cola de errores y errores de Rumbo | Prometheus, contadores de negocio |
 | Logs del recorrido | MySQL Logs, `app_logs` filtrada por el TrackID |
@@ -144,13 +138,13 @@ Las armamos en Grafana sobre las mismas métricas del tablero:
 | Servicio caído | Prometheus no puede leer `/metrics` de un servicio por 1 minuto |
 | Cola de errores con mensajes | Se mandó al menos un mensaje a la cola de errores |
 
-Por ahora las alertas se ven en Grafana. A dónde se mandan (mail, Discord) lo definimos cuando el sistema esté desplegado.
+Los umbrales salen de los objetivos de servicio y se ajustan con los resultados de las pruebas de carga ([ADR-013](ADR-013-capacidad-y-costos.md)). Las alertas se ven en Grafana; el canal de aviso (mail o Discord) se elige al desplegar.
 
 ## Consecuencias
 - Son tres contenedores más (Prometheus, Grafana y el MySQL de logs) para levantar en cada entorno.
-- Cada log es un `INSERT` en el momento, así que cada paso de un pedido suma unos milisegundos. Con nuestro volumen no se nota, y a cambio no se pierde ningún log si un servicio se cae.
+- Cada log es un `INSERT` en el momento y el pedido espera a que termine. Con poca carga suma unos milisegundos, y a cambio no se pierde ningún log si un servicio se cae. Con mucha carga es el primer límite del sistema: en la prueba de carga, con 100 pedidos simultáneos, el MySQL de logs llegó a su máximo de conexiones, algunos pedidos pasaron los 2 segundos y se perdieron logs, así que algunas trazas quedaron incompletas ([ADR-013](ADR-013-capacidad-y-costos.md)). Lo resolvemos limitando las conexiones de cada servicio al MySQL de logs y escribiendo los logs en segundo plano.
 - Si el MySQL de logs se cae, los logs de ese rato solo quedan en la consola de Docker y no aparecen en Grafana.
 - La tabla crece sin límite. Para limpiarla borramos las filas viejas a mano o bajamos el volumen (`docker compose down -v`).
 - La traza depende de que cada servicio pase el TrackID en todas sus llamadas y eventos, y escriba sus logs. Si alguno se lo olvida, el recorrido se corta ahí. Lo resolvemos con el mismo middleware y el mismo paquete `logs` en todos los servicios.
 - La traza se ve como una lista en orden, no como un árbol: si algún día hiciéramos llamadas en paralelo, habría que agregar qué paso llamó a cuál.
-- Los valores de los objetivos y las alertas son iniciales. Los revisamos con los resultados de D13.
+- Con los resultados de D13 mantenemos los objetivos: p95 menor a 500 ms y menos de 1 % de errores se cumplen hasta unas 500 consultas por segundo. Por encima, lo que falla primero es la escritura de logs, no Inventario.

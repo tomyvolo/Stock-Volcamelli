@@ -14,7 +14,7 @@ type Claims struct {
 	UserID   uint   `json:"user_id"`
 	Email    string `json:"email"`
 	Role     string `json:"role"`
-	BranchID *uint  `json:"branch_id"` // nil para DIRECTOR e INTEGRACION
+	BranchID *uint  `json:"branch_id"` // nil para DIRECTOR
 	jwt.RegisteredClaims
 }
 

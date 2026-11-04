@@ -74,3 +74,81 @@ func TestLogin_UnknownEmail(t *testing.T) {
 		t.Errorf("Se esperaba ErrInvalidCredentials, pero se obtuvo: %v", err)
 	}
 }
+
+func TestCreateUser_DirectorCreatesAdmin(t *testing.T) {
+	service := newService(t)
+	branch := uint(2)
+
+	user, err := service.CreateUser("DIRECTOR", nil,
+		users.UserModel{Name: "Admin 2", Email: "admin2@volcamelli.com", Role: "ADMIN_SUCURSAL", BranchID: &branch}, "clave-nueva")
+
+	if err != nil {
+		t.Fatalf("No se esperaba un error, pero falló: %v", err)
+	}
+	if user.ID == 0 {
+		t.Errorf("Se esperaba que el usuario tuviera un ID")
+	}
+	// La contraseña se guarda hasheada, nunca en texto.
+	if user.PasswordHash == "clave-nueva" || !utils.CheckPassword("clave-nueva", user.PasswordHash) {
+		t.Errorf("La contraseña no quedó hasheada con bcrypt")
+	}
+}
+
+func TestCreateUser_AdminCreatesSellerOfOwnBranch(t *testing.T) {
+	service := newService(t)
+	branch := uint(1)
+
+	_, err := service.CreateUser("ADMIN_SUCURSAL", &branch,
+		users.UserModel{Name: "Vendedor 2", Email: "vendedor2@volcamelli.com", Role: "VENDEDOR", BranchID: &branch}, "clave-nueva")
+
+	if err != nil {
+		t.Errorf("No se esperaba un error, pero falló: %v", err)
+	}
+}
+
+func TestCreateUser_AdminCannotCreateAdmin(t *testing.T) {
+	service := newService(t)
+	branch := uint(1)
+
+	_, err := service.CreateUser("ADMIN_SUCURSAL", &branch,
+		users.UserModel{Name: "Otro admin", Email: "admin3@volcamelli.com", Role: "ADMIN_SUCURSAL", BranchID: &branch}, "clave-nueva")
+
+	if !errors.Is(err, ErrNotAllowed) {
+		t.Errorf("Se esperaba ErrNotAllowed, pero se obtuvo: %v", err)
+	}
+}
+
+func TestCreateUser_AdminCannotCreateInOtherBranch(t *testing.T) {
+	service := newService(t)
+	adminBranch, otherBranch := uint(1), uint(2)
+
+	_, err := service.CreateUser("ADMIN_SUCURSAL", &adminBranch,
+		users.UserModel{Name: "Vendedor", Email: "vendedor3@volcamelli.com", Role: "VENDEDOR", BranchID: &otherBranch}, "clave-nueva")
+
+	if !errors.Is(err, ErrNotAllowed) {
+		t.Errorf("Se esperaba ErrNotAllowed, pero se obtuvo: %v", err)
+	}
+}
+
+func TestCreateUser_EmailTaken(t *testing.T) {
+	service := newService(t)
+	branch := uint(1)
+
+	_, err := service.CreateUser("DIRECTOR", nil,
+		users.UserModel{Name: "Repetido", Email: "vendedor@volcamelli.com", Role: "VENDEDOR", BranchID: &branch}, "clave-nueva")
+
+	if !errors.Is(err, ErrEmailTaken) {
+		t.Errorf("Se esperaba ErrEmailTaken, pero se obtuvo: %v", err)
+	}
+}
+
+func TestCreateUser_SellerNeedsBranch(t *testing.T) {
+	service := newService(t)
+
+	_, err := service.CreateUser("DIRECTOR", nil,
+		users.UserModel{Name: "Sin sucursal", Email: "vendedor4@volcamelli.com", Role: "VENDEDOR"}, "clave-nueva")
+
+	if !errors.Is(err, ErrBranchRequired) {
+		t.Errorf("Se esperaba ErrBranchRequired, pero se obtuvo: %v", err)
+	}
+}

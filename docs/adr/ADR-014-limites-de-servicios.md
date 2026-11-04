@@ -35,6 +35,13 @@ Las relaciones entre servicios son:
 
 Cómo se comunican lo explicamos en [ADR-016](ADR-016-comunicacion-entre-servicios.md).
 
+## Validación
+Validamos estos límites con el sistema levantado con Docker Compose:
+
+- **El gateway es la única entrada.** El login y las consultas del contrato entran por el puerto del gateway; Usuarios e Inventario no tienen puertos abiertos hacia afuera.
+- **Cada servicio es dueño de sus datos.** Usuarios tiene los usuarios en su MySQL y es el único que los crea (`POST /api/create-users`) e Inventario los productos y el stock en el suyo. Ninguno lee la base del otro: Inventario no sabe nada de usuarios, recibe del gateway quién hace el pedido en los headers.
+- **Una falla no arrastra a los demás.** Con las dos instancias de Inventario caídas, las consultas de stock responden `503` y el login sigue andando.
+
 ## Alternativas que descartamos
 - **Dejar las transferencias dentro de Inventario, como en ADR-001.** Es lo que había y lo que queremos evitar: el servicio publicado dependería de Rumbo.
 - **Tener un servicio de Notificaciones aparte.** Era un servicio más para levantar y mantener, y no cubría ninguna funcionalidad que alguien necesitara.

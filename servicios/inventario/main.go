@@ -134,6 +134,9 @@ func main() {
 	if port == "" {
 		port = "8082"
 	}
+	if os.Getenv("INVENTARIO_API_KEY") == "" {
+		log.Print("sin INVENTARIO_API_KEY: las consultas no piden API key, así que solo se puede usar detrás del gateway")
+	}
 	logStore.Write("", stage, "info", "inventario iniciado en el puerto "+port)
 	log.Printf("inventario listo en :%s", port)
 	if err := router.Run(":" + port); err != nil {

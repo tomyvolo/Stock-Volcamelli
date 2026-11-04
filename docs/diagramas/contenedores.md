@@ -5,7 +5,7 @@ Muestra las piezas del sistema y cómo se comunican.
 ```mermaid
 flowchart TB
     U["Director / Admin de sucursal / Vendedor"]
-    C["Grupo consumidor<br/>INTEGRACION"]
+    C["Grupo consumidor<br/>con API key"]
     F["Frontend<br/>React"]
     G["API Gateway<br/>Go + Gin"]
     US["Usuarios<br/>Go, capas"]
@@ -27,7 +27,7 @@ flowchart TB
     LLM["Modelo de lenguaje<br/>proveedor externo"]
 
     U --> F --> G
-    C -->|"Login y consultas"| G
+    C -->|"Consultas con X-API-Key"| I
     G --> US
     G --> BS
     G --> TS
@@ -60,7 +60,7 @@ flowchart TB
 | Contenedor | Qué hace |
 |---|---|
 | Frontend | La aplicación web que usan el director, los admins de sucursal y los vendedores, con el chat del asistente |
-| API Gateway | La única entrada. Valida el token, controla permisos, limita pedidos y manda cada pedido a su servicio |
+| API Gateway | La única entrada. Valida el token, controla permisos y manda cada pedido a su servicio |
 | Usuarios | Usuarios con su rol y su sucursal, y login |
 | Sucursales | Sucursales con su dirección |
 | Inventario | Catálogo, stock, reservas y movimientos. Corre en dos instancias |

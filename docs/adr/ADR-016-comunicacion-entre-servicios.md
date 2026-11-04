@@ -4,7 +4,7 @@
 Aceptado. Reemplaza a [ADR-005](ADR-005-comunicacion-inicial.md).
 
 ## Por qué revisamos ADR-005
-Con los servicios de [ADR-014](ADR-014-limites-de-servicios.md), las comunicaciones son otras: ahora el flujo principal es la transferencia, que pasa por Transferencias, Sucursales, Inventario y Rumbo. Además, ADR-005 dejaba sin definir el broker, los timeouts y qué hacer con los mensajes que fallan, y eso lo necesitamos para empezar a implementar.
+Con los servicios de [ADR-014](ADR-014-limites-de-servicios.md), las comunicaciones son otras: ahora la transferencia pasa por Transferencias, Sucursales, Inventario y Rumbo. Además, ADR-005 dejaba sin definir el broker, los timeouts y qué hacer con los mensajes que fallan, y eso lo necesitamos para empezar a implementar.
 
 ## Decisión
 
@@ -58,6 +58,13 @@ Inventario publica `ProductoActualizado` después de cada alta o cambio de un pr
 A Rumbo le habla solamente Transferencias, por HTTP. Los pedidos de traslado y la consulta de cambios cada 60 segundos corren en segundo plano, así el usuario nunca espera a Rumbo. Cuando el usuario responde un horario propuesto o cancela una transferencia, Transferencias guarda la acción y se la manda a Rumbo, también en segundo plano.
 
 Cuando el traslado se completa publicamos `TrasladoCompletado`. Si se rechaza, se cancela o no se realiza, publicamos `TrasladoCancelado`. Qué operaciones de Rumbo usamos, cómo traducimos sus estados y qué hacemos con cada error está en [ADR-009](ADR-009-consumo-de-rumbo.md). Los reintentos y el circuit breaker están en [ADR-010](ADR-010-resiliencia.md).
+
+## Validación
+Validamos la comunicación HTTP del gateway con Usuarios e Inventario, con el sistema levantado con Docker Compose:
+
+- **El TrackID llega a todos.** El gateway lo crea, lo manda en `X-Track-ID` y cada servicio lo guarda en sus logs. Con un mismo TrackID vemos en Grafana el paso por el gateway y por Inventario.
+- **Timeouts.** El gateway espera 2 segundos a cada servicio y, si no responde, devuelve `503`. NGINX espera 1 segundo para conectar con una instancia de Inventario y, si no puede, prueba la otra.
+- **Lo probamos con fallas.** Con una instancia de Inventario apagada, las consultas siguen respondiendo desde la otra; con las dos apagadas, el gateway responde `503`.
 
 ## Alternativas que descartamos
 - **Guardar el evento junto con el cambio y publicarlo con un proceso aparte (outbox).** Asegura que el evento no se pierda si el servicio se cae entre guardar y publicar, pero suma una tabla y un proceso de fondo en cada servicio que publica. Preferimos publicar apenas se guarda y reintentar, que es más simple. Si en las pruebas aparecen eventos perdidos, es lo primero que sumaríamos.

@@ -1,66 +1,24 @@
 openapi: 3.1.0
 info:
   title: Stock Volcamelli - Inventario
-  version: 1.0.0
+  version: 2.1.0
   description: >-
-    Consultas del catálogo de productos y del stock disponible por sucursal de Stock Volcamelli.
-    Todas las operaciones son de lectura y requieren un token que se obtiene con el login.
+    Consultas del catálogo de productos y del stock disponible por sucursal de Stock Volcamelli, y
+    aumento y reducción del stock de un producto en una sucursal. El stock que se cambia es el de la base de
+    Inventario publicado, que es solo del grupo consumidor.
+    Todas las operaciones requieren la API key del grupo consumidor en el header X-API-Key.
+    Cada respuesta trae el header X-Track-ID, que identifica el pedido en nuestros logs.
 servers:
-  - url: http://localhost:8080
-    description: Gateway levantado con Docker Compose
+  - url: https://stock-volcamelli-inventario.onrender.com
+    description: Inventario publicado
 security:
-  - bearerAuth: []
+  - apiKeyAuth: []
 tags:
-  - name: Auth
-    description: Obtener el token
   - name: Productos
     description: Catálogo de productos
   - name: Stock
-    description: Stock disponible por sucursal
+    description: Consultar, aumentar y reducir el stock por sucursal
 paths:
-  /api/auth/login:
-    post:
-      tags: [Auth]
-      operationId: login
-      summary: Obtener un token
-      description: >-
-        Se hace con la cuenta que le damos al grupo consumidor. El token dura 1 hora;
-        cuando vence, hay que volver a hacer login.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginInput'
-            example:
-              email: integracion@grupo-consumidor.com
-              password: una-clave-de-ejemplo
-      responses:
-        '200':
-          description: Login correcto.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Token'
-              example:
-                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ejemplo.firma
-                expiresIn: 3600
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '401':
-          description: Email o contraseña incorrectos.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                code: INVALID_CREDENTIALS
-                message: El email o la contraseña son incorrectos.
-        '500':
-          $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/products:
     get:
       tags: [Productos]
@@ -93,12 +51,8 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/products/{productId}:
     parameters:
       - $ref: '#/components/parameters/ProductId'
@@ -122,14 +76,10 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ProductNotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/branches/{branchId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
@@ -177,12 +127,8 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
   /api/branches/{branchId}/products/{productId}/stock:
     parameters:
       - $ref: '#/components/parameters/BranchId'
@@ -208,20 +154,103 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ProductNotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+  /api/branches/{branchId}/products/{productId}/stock/increase:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      tags: [Stock]
+      operationId: increaseStock
+      summary: Aumentar el stock de un producto en una sucursal
+      description: >-
+        Suma unidades al stock del producto en la sucursal, por ejemplo cuando llega mercadería.
+        Si el producto no tenía stock cargado en esa sucursal, arranca desde 0.
+        Un pedido repetido suma las unidades dos veces: si no llega la respuesta, hay que consultar
+        el stock antes de repetirlo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockChange'
+            example:
+              quantity: 5
+              reason: Llegó mercadería
+      responses:
+        '200':
+          description: El stock disponible del producto en la sucursal, después del aumento.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stock'
+              example:
+                branchId: 3
+                productId: 15
+                productName: Harina 000
+                quantity: 47
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/BranchOrProductNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/branches/{branchId}/products/{productId}/stock/decrease:
+    parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/ProductId'
+    post:
+      tags: [Stock]
+      operationId: decreaseStock
+      summary: Reducir el stock de un producto en una sucursal
+      description: >-
+        Resta unidades del stock disponible del producto en la sucursal, por ejemplo por una venta o una rotura.
+        Si el disponible no alcanza, el stock no cambia y la respuesta es 409.
+        Un pedido repetido resta las unidades dos veces: si no llega la respuesta, hay que consultar
+        el stock antes de repetirlo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockChange'
+            example:
+              quantity: 2
+              reason: Venta
+      responses:
+        '200':
+          description: El stock disponible del producto en la sucursal, después de la reducción.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stock'
+              example:
+                branchId: 3
+                productId: 15
+                productName: Harina 000
+                quantity: 40
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/BranchOrProductNotFound'
+        '409':
+          $ref: '#/components/responses/InsufficientStock'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: La API key que le pasamos al grupo consumidor por un medio privado.
   parameters:
     BranchId:
       name: branchId
@@ -260,7 +289,7 @@ components:
         default: 20
   responses:
     InvalidRequest:
-      description: Algún parámetro es inválido.
+      description: Algún parámetro o dato del cuerpo es inválido.
       content:
         application/json:
           schema:
@@ -269,23 +298,14 @@ components:
             code: INVALID_REQUEST
             message: El parámetro page tiene que ser un número mayor a 0.
     Unauthorized:
-      description: Falta el token, no es válido o venció.
+      description: Falta la API key o no es válida.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiError'
           example:
             code: UNAUTHORIZED
-            message: Falta el token o venció. Volvé a hacer login.
-    Forbidden:
-      description: El token es válido, pero el rol no tiene permiso para esta operación.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: FORBIDDEN
-            message: No tenés permiso para esta operación.
+            message: Falta la API key o no es válida.
     ProductNotFound:
       description: El producto no existe.
       content:
@@ -295,6 +315,32 @@ components:
           example:
             code: PRODUCT_NOT_FOUND
             message: No existe el producto 15.
+    BranchOrProductNotFound:
+      description: La sucursal o el producto no existen.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            branch:
+              summary: La sucursal no existe
+              value:
+                code: BRANCH_NOT_FOUND
+                message: No existe la sucursal 7.
+            product:
+              summary: El producto no existe
+              value:
+                code: PRODUCT_NOT_FOUND
+                message: No existe el producto 15.
+    InsufficientStock:
+      description: El stock disponible no alcanza para la reducción. El stock no cambia.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: INSUFFICIENT_STOCK
+            message: El stock disponible del producto 15 en la sucursal 3 no alcanza para restar 5.
     InternalError:
       description: Error de nuestro lado.
       content:
@@ -304,35 +350,7 @@ components:
           example:
             code: INTERNAL_ERROR
             message: Ocurrió un error inesperado. Probá de nuevo en unos minutos.
-    ServiceUnavailable:
-      description: Inventario no está disponible en este momento.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
-          example:
-            code: SERVICE_UNAVAILABLE
-            message: El servicio no está disponible. Probá de nuevo en unos minutos.
   schemas:
-    LoginInput:
-      type: object
-      required: [email, password]
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-          minLength: 1
-    Token:
-      type: object
-      required: [token, expiresIn]
-      properties:
-        token:
-          type: string
-        expiresIn:
-          type: integer
-          description: Segundos hasta que vence el token.
     Product:
       type: object
       required: [id, name]
@@ -379,6 +397,19 @@ components:
             Stock disponible en la sucursal al momento de la consulta: el total menos lo que
             está reservado para transferencias a otras sucursales que todavía no llegaron a destino.
             Nunca es negativo.
+    StockChange:
+      type: object
+      required: [quantity, reason]
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          description: Cantidad de unidades a sumar o restar.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: El motivo del cambio, por ejemplo "Venta" o "Llegó mercadería".
     ApiError:
       type: object
       required: [code, message]
