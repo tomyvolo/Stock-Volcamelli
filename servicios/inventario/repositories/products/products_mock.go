@@ -12,6 +12,23 @@ type ProductsMock struct {
 	MockDB []products.ProductModel
 }
 
+// CreateProduct no puede agregar al slice del mock (es una copia), así que solo le asigna el ID.
+// Los tests de alta comprueban el producto que devuelve el service.
+func (repo ProductsMock) CreateProduct(product *products.ProductModel) error {
+	product.ID = uint(len(repo.MockDB) + 1)
+	return nil
+}
+
+func (repo ProductsMock) UpdateProduct(product products.ProductModel) error {
+	for i := range repo.MockDB {
+		if repo.MockDB[i].ID == product.ID {
+			repo.MockDB[i] = product
+			return nil
+		}
+	}
+	return gorm.ErrRecordNotFound
+}
+
 func (repo ProductsMock) GetProducts(page, size int) (products.ProductListResult, error) {
 	total := int64(len(repo.MockDB))
 	offset := (page - 1) * size
