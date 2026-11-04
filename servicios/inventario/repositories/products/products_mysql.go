@@ -26,6 +26,16 @@ func (repo ProductsMySQL) GetProducts(page, size int) (products.ProductListResul
 	return products.ProductListResult{Products: list, Total: total}, nil
 }
 
+// CreateProduct inserta el producto y GORM le completa el ID que asignó MySQL.
+func (repo ProductsMySQL) CreateProduct(product *products.ProductModel) error {
+	return repo.DB.Create(product).Error
+}
+
+// UpdateProduct guarda todos los campos de un producto que ya existe, incluido el proveedor en NULL.
+func (repo ProductsMySQL) UpdateProduct(product products.ProductModel) error {
+	return repo.DB.Save(&product).Error
+}
+
 // GetProductByID devuelve gorm.ErrRecordNotFound si el producto no existe.
 func (repo ProductsMySQL) GetProductByID(id uint) (products.ProductModel, error) {
 	var product products.ProductModel
