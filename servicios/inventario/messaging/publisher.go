@@ -14,13 +14,27 @@ import (
 	"inventario/logs"
 )
 
-const EventProductUpdated = "ProductoActualizado"
+const (
+	EventProductUpdated = "ProductoActualizado"
+	EventStockUpdated   = "StockActualizado"
+)
 
 // productEvent es lo que viaja en el cuerpo de ProductoActualizado.
 type productEvent struct {
 	ID        string `json:"id"`
 	Type      string `json:"tipo"`
 	ProductID uint   `json:"productoId"`
+	TrackID   string `json:"trackId"`
+	Date      string `json:"fecha"`
+}
+
+// stockEvent es lo que viaja en el cuerpo de StockActualizado: el disponible que quedó en la sucursal.
+type stockEvent struct {
+	ID        string `json:"id"`
+	Type      string `json:"tipo"`
+	BranchID  uint   `json:"sucursalId"`
+	ProductID uint   `json:"productoId"`
+	Available int    `json:"disponible"`
 	TrackID   string `json:"trackId"`
 	Date      string `json:"fecha"`
 }
@@ -35,6 +49,16 @@ type RabbitMQPublisher struct {
 func (p RabbitMQPublisher) ProductUpdated(productID uint, trackID string) {
 	event := productEvent{ID: newEventID(), Type: EventProductUpdated, ProductID: productID, TrackID: trackID, Date: time.Now().Format(time.RFC3339)}
 	go p.publish(EventProductUpdated, trackID, event)
+}
+
+// StockUpdated avisa el disponible que quedó después de un cambio de stock. Solo lo usa Tiempo Real
+// para actualizar las pantallas, así que también va en segundo plano.
+func (p RabbitMQPublisher) StockUpdated(branchID, productID uint, available int, trackID string) {
+	event := stockEvent{
+		ID: newEventID(), Type: EventStockUpdated, BranchID: branchID, ProductID: productID,
+		Available: available, TrackID: trackID, Date: time.Now().Format(time.RFC3339),
+	}
+	go p.publish(EventStockUpdated, trackID, event)
 }
 
 // publish reintenta después de 1, 2 y 4 segundos. Si después del cuarto intento sigue sin poder,
@@ -58,8 +82,8 @@ func (p RabbitMQPublisher) publish(eventType, trackID string, event any) {
 	p.Logs.Write(trackID, stage, "error", fmt.Sprintf("no se pudo publicar %s después de %d intentos: %v. Evento: %s", eventType, len(backoff)+1, err, body))
 }
 
-// send abre una conexión por evento, como el productor de la clase. Los productos cambian poco,
-// así que no hace falta mantenerla abierta.
+// send abre una conexión por evento, como el productor de la clase. Con los pocos usuarios que tenemos,
+// los cambios de productos y de stock son pocos, así que no hace falta mantenerla abierta.
 func (p RabbitMQPublisher) send(eventType string, body []byte) error {
 	conn, err := amqp.Dial(p.URL)
 	if err != nil {
@@ -96,3 +120,6 @@ type NullPublisher struct{}
 func (NullPublisher) ProductUpdated(productID uint, trackID string) {
 	log.Printf("sin RabbitMQ: no se publicó %s del producto %d", EventProductUpdated, productID)
 }
+
+// Sin RabbitMQ no hay Tiempo Real escuchando, así que no hace falta avisar nada.
+func (NullPublisher) StockUpdated(branchID, productID uint, available int, trackID string) {}

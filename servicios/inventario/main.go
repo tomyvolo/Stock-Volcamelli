@@ -48,8 +48,12 @@ func main() {
 	}
 	rabbitURL := os.Getenv("RABBITMQ_URL")
 
-	// Si no hay RabbitMQ, los productos se guardan igual y el evento queda avisado en el log.
-	var publisher productsServices.Publisher = messaging.NullPublisher{}
+	// El mismo publicador avisa los cambios de productos (para la búsqueda) y de stock (para Tiempo Real).
+	// Si no hay RabbitMQ, los cambios se guardan igual y no se publica nada.
+	var publisher interface {
+		productsServices.Publisher
+		stockServices.Publisher
+	} = messaging.NullPublisher{}
 	if rabbitURL != "" {
 		publisher = messaging.RabbitMQPublisher{URL: rabbitURL, Logs: logStore}
 	}
@@ -70,9 +74,9 @@ func main() {
 	productsService := productsServices.ProductsService{Repo: productsRepository, Search: searchRepository, Publisher: publisher}
 	stockService := stockServices.StockService{
 		Repo: stockRepository, ProductsRepo: productsRepository,
-		Changes: stockChangesRepository, Branches: branchesRepository,
+		Changes: stockChangesRepository, Branches: branchesRepository, Publisher: publisher,
 	}
-	reservationsService := reservationsServices.ReservationsService{Repo: stockChangesRepository, ProductsRepo: productsRepository}
+	reservationsService := reservationsServices.ReservationsService{Repo: stockChangesRepository, ProductsRepo: productsRepository, Publisher: publisher}
 
 	productsController := productsControllers.ProductsController{Service: productsService, Logs: logStore}
 	stockController := stockControllers.StockController{Service: stockService, Logs: logStore}
@@ -133,9 +137,6 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8082"
-	}
-	if os.Getenv("INVENTARIO_API_KEY") == "" {
-		log.Print("sin INVENTARIO_API_KEY: las consultas no piden API key, así que solo se puede usar detrás del gateway")
 	}
 	logStore.Write("", stage, "info", "inventario iniciado en el puerto "+port)
 	log.Printf("inventario listo en :%s", port)

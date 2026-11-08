@@ -28,6 +28,23 @@ var (
 type ReservationsService struct {
 	Repo         stockRepo.StockChangesRepo
 	ProductsRepo productsRepo.ProductsRepo
+	// Avisa cada cambio del disponible, para que Tiempo Real actualice las pantallas. Puede ser nil.
+	Publisher Publisher
+}
+
+// Publisher publica StockActualizado. Lo implementa messaging con RabbitMQ.
+type Publisher interface {
+	StockUpdated(branchID, productID uint, available int, trackID string)
+}
+
+// notify avisa el disponible de cada fila que cambió. Se llama recién cuando la transacción se guardó.
+func (s *ReservationsService) notify(rows []stock.StockRow) {
+	if s.Publisher == nil {
+		return
+	}
+	for _, row := range rows {
+		s.Publisher.StockUpdated(row.BranchID, row.ProductID, row.Total-row.Reserved, "")
+	}
 }
 
 // Reserve aparta unidades en el origen. Si la transferencia ya tenía su reserva, la devuelve sin reservar de nuevo.
@@ -39,6 +56,7 @@ func (s *ReservationsService) Reserve(request reservations.ReservationModel) (re
 	}
 
 	var result reservations.ReservationModel
+	var changed []stock.StockRow
 	err := s.Repo.Transaction(func(tx stockRepo.StockChangesRepo) error {
 		existing, err := tx.LockReservation(request.TransferID)
 		if err == nil {
@@ -78,8 +96,12 @@ func (s *ReservationsService) Reserve(request reservations.ReservationModel) (re
 			return err
 		}
 		result = request
+		changed = []stock.StockRow{row}
 		return nil
 	})
+	if err == nil {
+		s.notify(changed)
+	}
 	return result, err
 }
 
@@ -91,11 +113,15 @@ func (s *ReservationsService) Release(transferID string) (reservations.Reservati
 	}
 
 	var result reservations.ReservationModel
+	var changed []stock.StockRow
 	err := s.Repo.Transaction(func(tx stockRepo.StockChangesRepo) error {
 		var err error
-		result, err = release(tx, transferID)
+		result, changed, err = release(tx, transferID)
 		return err
 	})
+	if err == nil {
+		s.notify(changed)
+	}
 	return result, err
 }
 
@@ -106,20 +132,21 @@ func (s *ReservationsService) ConfirmByEvent(eventID, transferID string) error {
 
 // ReleaseByEvent libera la reserva cuando llega TrasladoCancelado.
 func (s *ReservationsService) ReleaseByEvent(eventID, transferID string) error {
-	return s.oncePerEvent(eventID, reservations.EventTransferCancelled, transferID, func(tx stockRepo.StockChangesRepo, transferID string) error {
-		_, err := release(tx, transferID)
-		return err
+	return s.oncePerEvent(eventID, reservations.EventTransferCancelled, transferID, func(tx stockRepo.StockChangesRepo, transferID string) ([]stock.StockRow, error) {
+		_, changed, err := release(tx, transferID)
+		return changed, err
 	})
 }
 
 // oncePerEvent corre change y anota el evento como procesado, en la misma transacción.
 // Si RabbitMQ entrega el mismo evento otra vez, ya está anotado y no se cambia nada.
 func (s *ReservationsService) oncePerEvent(eventID, eventType, transferID string,
-	change func(tx stockRepo.StockChangesRepo, transferID string) error) error {
+	change func(tx stockRepo.StockChangesRepo, transferID string) ([]stock.StockRow, error)) error {
 	if eventID == "" || transferID == "" {
 		return ErrInvalidReservation
 	}
-	return s.Repo.Transaction(func(tx stockRepo.StockChangesRepo) error {
+	var changed []stock.StockRow
+	err := s.Repo.Transaction(func(tx stockRepo.StockChangesRepo) error {
 		processed, err := tx.EventProcessed(eventID)
 		if err != nil {
 			return err
@@ -127,60 +154,66 @@ func (s *ReservationsService) oncePerEvent(eventID, eventType, transferID string
 		if processed {
 			return nil
 		}
-		if err := change(tx, transferID); err != nil {
+		if changed, err = change(tx, transferID); err != nil {
 			return err
 		}
 		return tx.SaveProcessedEvent(reservations.ProcessedEventModel{EventID: eventID, Type: eventType})
 	})
+	if err == nil {
+		s.notify(changed)
+	}
+	return err
 }
 
-func release(tx stockRepo.StockChangesRepo, transferID string) (reservations.ReservationModel, error) {
+// release devuelve también la fila de stock que cambió, o ninguna si no había nada que liberar.
+func release(tx stockRepo.StockChangesRepo, transferID string) (reservations.ReservationModel, []stock.StockRow, error) {
 	existing, err := tx.LockReservation(transferID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		released := reservations.ReservationModel{TransferID: transferID, Status: reservations.StatusReleased}
-		return released, tx.SaveReservation(released)
+		return released, nil, tx.SaveReservation(released)
 	}
 	if err != nil {
-		return reservations.ReservationModel{}, err
+		return reservations.ReservationModel{}, nil, err
 	}
 
 	switch existing.Status {
 	case reservations.StatusReleased:
-		return existing, nil
+		return existing, nil, nil
 	case reservations.StatusConfirmed:
-		return reservations.ReservationModel{}, ErrReservationConfirmed
+		return reservations.ReservationModel{}, nil, ErrReservationConfirmed
 	}
 
 	row, err := tx.LockStock(existing.ProductID, existing.OriginBranchID)
 	if err != nil {
-		return reservations.ReservationModel{}, err
+		return reservations.ReservationModel{}, nil, err
 	}
 	row.Reserved -= existing.Quantity
 	if err := tx.SaveStock(row); err != nil {
-		return reservations.ReservationModel{}, err
+		return reservations.ReservationModel{}, nil, err
 	}
 	existing.Status = reservations.StatusReleased
 	if err := tx.SaveReservation(existing); err != nil {
-		return reservations.ReservationModel{}, err
+		return reservations.ReservationModel{}, nil, err
 	}
-	return existing, nil
+	return existing, []stock.StockRow{row}, nil
 }
 
 // confirm pasa las unidades al destino cuando el traslado llegó: resta del total y de lo reservado
 // en el origen, suma al total del destino y registra un movimiento en cada sucursal.
-func confirm(tx stockRepo.StockChangesRepo, transferID string) error {
+// Devuelve las dos filas de stock que cambió.
+func confirm(tx stockRepo.StockChangesRepo, transferID string) ([]stock.StockRow, error) {
 	reservation, err := tx.LockReservation(transferID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ErrReservationNotFound
+		return nil, ErrReservationNotFound
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	switch reservation.Status {
 	case reservations.StatusConfirmed:
-		return nil
+		return nil, nil
 	case reservations.StatusReleased:
-		return ErrReservationReleased
+		return nil, ErrReservationReleased
 	}
 
 	// Bloqueamos las dos filas siempre en el mismo orden (primero la sucursal de id menor),
@@ -196,7 +229,7 @@ func confirm(tx stockRepo.StockChangesRepo, transferID string) error {
 			// El destino puede no tener el producto todavía: la fila se crea al guardar.
 			row = stock.StockRow{ProductID: reservation.ProductID, BranchID: branchID}
 		} else if err != nil {
-			return err
+			return nil, err
 		}
 		rows[branchID] = row
 	}
@@ -208,10 +241,10 @@ func confirm(tx stockRepo.StockChangesRepo, transferID string) error {
 	destination.Total += reservation.Quantity
 
 	if err := tx.SaveStock(origin); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tx.SaveStock(destination); err != nil {
-		return err
+		return nil, err
 	}
 
 	out := movements.MovementModel{
@@ -225,12 +258,12 @@ func confirm(tx stockRepo.StockChangesRepo, transferID string) error {
 		Description: fmt.Sprintf("Desde la sucursal %d", origin.BranchID), TransferID: &transferID,
 	}
 	if err := tx.AddMovement(out); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tx.AddMovement(in); err != nil {
-		return err
+		return nil, err
 	}
 
 	reservation.Status = reservations.StatusConfirmed
-	return tx.SaveReservation(reservation)
+	return []stock.StockRow{origin, destination}, tx.SaveReservation(reservation)
 }

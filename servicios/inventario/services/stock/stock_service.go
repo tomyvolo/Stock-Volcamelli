@@ -35,6 +35,13 @@ type StockService struct {
 	Changes repo.StockChangesRepo
 	// Antes de un ajuste, le preguntamos a Sucursales si la sucursal existe.
 	Branches branchesRepo.BranchesRepo
+	// Avisa cada cambio del disponible, para que Tiempo Real actualice las pantallas. Puede ser nil.
+	Publisher Publisher
+}
+
+// Publisher publica StockActualizado. Lo implementa messaging con RabbitMQ.
+type Publisher interface {
+	StockUpdated(branchID, productID uint, available int, trackID string)
 }
 
 func (s *StockService) GetBranchStock(branchID uint, lowStock bool) ([]stock.StockModel, error) {
@@ -159,6 +166,10 @@ func (s *StockService) change(branchID, productID uint, kind string, quantity in
 			ResultingTotal: row.Total, Reason: movements.ReasonAdjustment, Description: description,
 		})
 	})
+	// Avisamos recién cuando la transacción se guardó: si falló, el disponible no cambió.
+	if err == nil && s.Publisher != nil {
+		s.Publisher.StockUpdated(result.BranchID, result.ProductID, result.Total-result.Reserved, trackID)
+	}
 	return result, product.Name, err
 }
 
