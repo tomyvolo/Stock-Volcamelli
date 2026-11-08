@@ -51,7 +51,7 @@ Los errores de negocio (`422`, `409`) no cuentan como fallas: Rumbo está andand
 | **Usuarios** | Todo para quien ya tiene token: el gateway valida el JWT solo, con la firma, sin consultar a Usuarios | Iniciar sesión |
 | **Asistente, servidor MCP o el proveedor del modelo** | Todo | El chat responde que el asistente no está disponible ([ADR-018](ADR-018-asistente.md)) |
 | **Tiempo Real** | Todo | Las pantallas no se actualizan solas; el usuario recarga ([ADR-019](ADR-019-tiempo-real.md)) |
-| **El MySQL de logs** | Todo | Los logs de ese rato no aparecen en Grafana; quedan solo en la consola de Docker ([ADR-011](ADR-011-observabilidad.md)). Si en vez de caerse se satura, los pedidos se demoran porque esperan su `INSERT`, y con mucha carga algunos pasan los 2 segundos ([ADR-013](ADR-013-capacidad-y-costos.md)) |
+| **El MySQL de logs** | Todo | Los logs de ese rato no aparecen en Grafana; quedan solo en la consola de Docker ([ADR-011](ADR-011-observabilidad.md)). Cada log espera como mucho 200 ms, así que los pedidos se demoran un poco pero siguen respondiendo. Lo mismo si en vez de caerse se satura ([ADR-013](ADR-013-capacidad-y-costos.md)) |
 | **NGINX** | Todo lo que no es Inventario | Lo mismo que si se cayeran las dos instancias de Inventario |
 | **Gateway** | Los procesos de fondo (Rumbo y eventos) | Todo lo que viene de afuera: el frontend y el otro grupo |
 

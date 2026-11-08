@@ -42,7 +42,7 @@ Cada servicio guarda sus logs directo en una tabla de MySQL, y Grafana los lee d
 
 - **El MySQL de logs** es un contenedor aparte, solo para esto. No usamos la base de ningún servicio, porque los logs se escriben todo el tiempo y le sacarían capacidad al negocio. Cuando el volumen es nuevo, la imagen de MySQL corre `001_schema.sql`, que crea la tabla y un usuario `grafana_reader` que solo puede hacer `SELECT` sobre ella. Los datos quedan en un volumen de Docker.
 - **Cada servicio tiene un paquete `logs`** con dos funciones. `Connect` abre la conexión con GORM (los datos llegan por la variable de entorno `MYSQL_DSN`) y corre `AutoMigrate` sobre `app_logs`. `Write(trackID, stage, level, message)` guarda una fila con `db.Table("app_logs").Create(...)`.
-- **Si el MySQL de logs falla o se queda sin conexiones**, `Write` escribe un aviso por consola con `log.Printf` y el pedido sigue: el log se puede ver con `docker compose logs <servicio>`, pero no aparece en Grafana.
+- **Si el MySQL de logs falla o se queda sin conexiones**, `Write` espera como mucho 200 ms, escribe el log completo por consola con `log.Printf` y el pedido sigue: el log se puede ver con `docker compose logs <servicio>`, pero no aparece en Grafana. Sin ese límite, con el MySQL de logs apagado cada pedido se quedaba esperando su `INSERT`, pasaba los 2 segundos del gateway y respondía 503.
 - **Cada servicio espera a que el MySQL de logs esté listo** antes de arrancar (`depends_on` con `condition: service_healthy` en el Compose), porque necesita la conexión para escribir.
 
 La tabla `app_logs`:
@@ -142,7 +142,7 @@ Los umbrales salen de los objetivos de servicio y se ajustan con los resultados 
 
 ## Consecuencias
 - Son tres contenedores más (Prometheus, Grafana y el MySQL de logs) para levantar en cada entorno.
-- Cada log es un `INSERT` en el momento y el pedido espera a que termine. Con poca carga suma unos milisegundos, y a cambio no se pierde ningún log si un servicio se cae. Con mucha carga es el primer límite del sistema: en la prueba de carga, con 100 pedidos simultáneos, el MySQL de logs llegó a su máximo de conexiones, algunos pedidos pasaron los 2 segundos y se perdieron logs, así que algunas trazas quedaron incompletas ([ADR-013](ADR-013-capacidad-y-costos.md)). Lo resolvemos limitando las conexiones de cada servicio al MySQL de logs y escribiendo los logs en segundo plano.
+- Cada log es un `INSERT` en el momento y el pedido espera a que termine, hasta 200 ms. Con poca carga suma unos milisegundos, y a cambio no se pierde ningún log si un servicio se cae. Con mucha carga es el primer límite del sistema: en la prueba de carga, con 100 pedidos simultáneos, el MySQL de logs llegó a su máximo de conexiones, algunos pedidos pasaron los 2 segundos y se perdieron logs, así que algunas trazas quedaron incompletas ([ADR-013](ADR-013-capacidad-y-costos.md)). Esa medición es de antes del límite de 200 ms, y todavía no la repetimos. Lo que falta para resolverlo es limitar las conexiones de cada servicio al MySQL de logs y escribir los logs en segundo plano.
 - Si el MySQL de logs se cae, los logs de ese rato solo quedan en la consola de Docker y no aparecen en Grafana.
 - La tabla crece sin límite. Para limpiarla borramos las filas viejas a mano o bajamos el volumen (`docker compose down -v`).
 - La traza depende de que cada servicio pase el TrackID en todas sus llamadas y eventos, y escriba sus logs. Si alguno se lo olvida, el recorrido se corta ahí. Lo resolvemos con el mismo middleware y el mismo paquete `logs` en todos los servicios.
