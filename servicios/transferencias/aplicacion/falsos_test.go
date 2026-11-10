@@ -2,6 +2,8 @@ package aplicacion
 
 import (
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"transferencias/dominio"
@@ -13,9 +15,13 @@ import (
 type repoFalso struct {
 	transferencias map[string]*dominio.Transferencia
 	ultimaConsulta time.Time
+	errGuardar     error // simula MongoDB fallando al guardar
 }
 
 func (r *repoFalso) Guardar(t *dominio.Transferencia) error {
+	if r.errGuardar != nil {
+		return r.errGuardar
+	}
 	r.transferencias[t.ID] = t
 	return nil
 }
@@ -143,18 +149,32 @@ func (f *transporteFalso) Cancelar(t *dominio.Transferencia, motivo string) (dom
 }
 
 type eventosFalsos struct {
+	mu         sync.Mutex
 	publicados []puertos.Evento
+	espera     *sync.WaitGroup // los eventos que el servicio publica en segundo plano
+	lento      time.Duration   // simula RabbitMQ caído, que tarda en reintentos
 }
 
 func (e *eventosFalsos) Publicar(evento puertos.Evento) error {
+	time.Sleep(e.lento)
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.publicados = append(e.publicados, evento)
 	return nil
+}
+
+// todos espera los eventos en segundo plano y devuelve todo lo publicado.
+func (e *eventosFalsos) todos() []puertos.Evento {
+	e.espera.Wait()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.publicados)
 }
 
 // tipos devuelve los tipos de evento publicados para una transferencia.
 func (e *eventosFalsos) tipos(transferenciaID string) []string {
 	var tipos []string
-	for _, evento := range e.publicados {
+	for _, evento := range e.todos() {
 		if evento.TransferenciaID == transferenciaID {
 			tipos = append(tipos, evento.Tipo)
 		}

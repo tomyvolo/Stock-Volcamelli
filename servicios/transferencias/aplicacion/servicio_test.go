@@ -37,6 +37,7 @@ func nuevoEscenario() *escenario {
 		Ahora:   func() time.Time { return e.ahora },
 		NuevoID: func() string { ids++; return fmt.Sprintf("id-%d", ids) },
 	}
+	e.eventos.espera = &e.servicio.publicando
 	return e
 }
 
@@ -90,8 +91,32 @@ func TestCrear_Reservada(t *testing.T) {
 		t.Errorf("Se esperaba solo TransferenciaActualizada, pero se publicó: %v", e.eventos.tipos(transferencia.ID))
 	}
 	// Tiempo Real necesita el origen y el destino para que cada pantalla sepa si el aviso le toca.
-	if evento := e.eventos.publicados[0]; evento.OrigenID != transferencia.OrigenID || evento.DestinoID != transferencia.DestinoID {
+	if evento := e.eventos.todos()[0]; evento.OrigenID != transferencia.OrigenID || evento.DestinoID != transferencia.DestinoID {
 		t.Errorf("El evento tenía que llevar el origen %d y el destino %d, pero llevó %+v", transferencia.OrigenID, transferencia.DestinoID, evento)
+	}
+}
+
+// Con RabbitMQ caído, publicar tarda en reintentos. Crear y cancelar tienen que responder igual, sin
+// esperar los eventos: si no, el gateway corta antes y el usuario ve un error aunque todo quedó guardado.
+func TestCrearYCancelar_NoEsperanAlPublicar(t *testing.T) {
+	e := nuevoEscenario()
+	e.eventos.lento = 300 * time.Millisecond
+
+	inicio := time.Now()
+	transferencia, err := e.servicio.Crear(pedido(4), vendedor1, "track-1")
+	if err == nil {
+		_, err = e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta")
+	}
+	demora := time.Since(inicio)
+
+	if err != nil {
+		t.Fatalf("No se esperaba un error, pero falló: %v", err)
+	}
+	if demora > 100*time.Millisecond {
+		t.Errorf("Crear y cancelar tenían que responder sin esperar los eventos, pero tardaron %v", demora)
+	}
+	if !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCancelado) {
+		t.Errorf("Los eventos se tenían que publicar igual, pero se publicó: %v", e.eventos.tipos(transferencia.ID))
 	}
 }
 
@@ -337,6 +362,31 @@ func TestCambios_Completada(t *testing.T) {
 	}
 }
 
+// Si un cambio de Rumbo no se pudo guardar, la fecha de la última consulta no avanza: la próxima
+// consulta lo vuelve a traer y el traslado completado igual llega a Inventario.
+func TestCambios_NoAvanzaSiNoSeGuardo(t *testing.T) {
+	e := nuevoEscenario()
+	transferencia := e.creadaYEnviada(t, pedido(4))
+	desde := e.repo.ultimaConsulta
+	e.transporte.cambios = []dominio.Novedad{e.novedad(transferencia, dominio.Completada)}
+
+	e.repo.errGuardar = errors.New("MongoDB no responde")
+	e.servicio.ConsultarCambios()
+	if !e.repo.ultimaConsulta.Equal(desde) {
+		t.Fatalf("Con el guardado fallando, la última consulta no tenía que avanzar, pero quedó en %v", e.repo.ultimaConsulta)
+	}
+
+	e.repo.errGuardar = nil
+	transferencia.Estado = dominio.Programada // lo que había quedado guardado
+	e.servicio.ConsultarCambios()
+	if transferencia.Estado != dominio.Completada || !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCompletado) {
+		t.Errorf("En la consulta siguiente tenía que quedar COMPLETADA con TrasladoCompletado, pero quedó %s: %v", transferencia.Estado, e.eventos.tipos(transferencia.ID))
+	}
+	if e.repo.ultimaConsulta.Equal(desde) {
+		t.Errorf("Con todo guardado, la última consulta tenía que avanzar")
+	}
+}
+
 // CA-12: si Rumbo informa que el traslado no se hizo, queda NO_REALIZADA con su motivo y se libera la reserva.
 func TestCambios_NoRealizada(t *testing.T) {
 	e := nuevoEscenario()
@@ -393,6 +443,76 @@ func TestCambios_TrasladoSuelto(t *testing.T) {
 	if transferencia.Estado != dominio.Cancelada || len(e.eventos.tipos(transferencia.ID)) != eventos {
 		t.Errorf("Se esperaba que siga CANCELADA sin eventos nuevos, pero quedó %s: %v", transferencia.Estado, e.eventos.tipos(transferencia.ID))
 	}
+}
+
+// La consulta de cambios puede traer el traslado todavía programado mientras el envío ya lo estaba
+// cancelando. Ese dato es más viejo que la cancelación confirmada: no es un traslado suelto y no se
+// manda otra cancelación (Rumbo la rechazaría por repetir la clave con otro motivo).
+func TestCambios_DatoViejoDespuesDeCancelar(t *testing.T) {
+	e := nuevoEscenario()
+	transferencia := e.creadaYEnviada(t, pedido(4))
+	viejo := e.transporte.respReservar
+	e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta")
+	e.transporte.respCancelar = e.novedad(transferencia, dominio.Cancelada)
+	e.servicio.EnviarPendientes()
+	e.transporte.canceladoEn = ""
+
+	e.transporte.cambios = []dominio.Novedad{viejo}
+	e.servicio.ConsultarCambios()
+	e.servicio.EnviarPendientes()
+
+	if transferencia.CancelacionPorEnviar != nil || e.transporte.canceladoEn != "" {
+		t.Errorf("No se esperaba otra cancelación en Rumbo, pero se mandó para %q", e.transporte.canceladoEn)
+	}
+	if transferencia.Estado != dominio.Cancelada {
+		t.Errorf("Se esperaba que siga CANCELADA, pero quedó %s", transferencia.Estado)
+	}
+}
+
+// transporteLento se queda esperando en cada reserva hasta que el test lo suelte.
+type transporteLento struct {
+	*transporteFalso
+	entro  chan string
+	soltar chan struct{}
+}
+
+func (l *transporteLento) Reservar(t *dominio.Transferencia) (dominio.Novedad, error) {
+	l.entro <- t.ID
+	<-l.soltar
+	return l.transporteFalso.Reservar(t)
+}
+
+// Mientras el proceso de fondo espera a Rumbo por una transferencia, otra se puede cancelar sin esperar.
+// Con Rumbo lento, esperar hacía que el gateway cortara con 503 aunque la cancelación se aplicara.
+func TestCancelar_NoEsperaAOtraTransferencia(t *testing.T) {
+	e := nuevoEscenario()
+	a, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
+	b, _ := e.servicio.Crear(pedido(2), vendedor1, "track-2")
+	e.transporte.respReservar = e.novedad(a, dominio.Programada)
+	lento := &transporteLento{transporteFalso: e.transporte, entro: make(chan string, 2), soltar: make(chan struct{})}
+	e.servicio.Transporte = lento
+	termino := make(chan struct{})
+	go func() { e.servicio.EnviarPendientes(); close(termino) }()
+	otra := a.ID
+	if <-lento.entro == a.ID {
+		otra = b.ID
+	}
+
+	cancelo := make(chan error, 1)
+	go func() {
+		_, err := e.servicio.Cancelar(otra, vendedor1, "Ya no hace falta")
+		cancelo <- err
+	}()
+	select {
+	case err := <-cancelo:
+		if err != nil {
+			t.Errorf("No se pudo cancelar: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("La cancelación esperó a que Rumbo respondiera por otra transferencia")
+	}
+	close(lento.soltar)
+	<-termino
 }
 
 // Si Rumbo todavía no reservó el traslado, la cancelación es inmediata y se libera la reserva.

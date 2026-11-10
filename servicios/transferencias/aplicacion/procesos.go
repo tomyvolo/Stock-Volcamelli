@@ -34,16 +34,19 @@ func (s *Servicio) EnviarPendientes() {
 }
 
 // conLock lee la transferencia de nuevo con el lock tomado, por si otro la cambió desde que la buscamos,
-// y le aplica el cambio.
-func (s *Servicio) conLock(id string, cambio func(t *dominio.Transferencia)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// y le aplica el cambio. Devuelve false si no la pudo leer; si no existe, no hay nada que cambiar.
+func (s *Servicio) conLock(id string, cambio func(t *dominio.Transferencia)) bool {
+	defer s.bloquear(id)()
 	t, err := s.Repo.Obtener(id)
+	if errors.Is(err, puertos.ErrNoExiste) {
+		return true
+	}
 	if err != nil {
 		s.Registro.Escribir("", "warn", fmt.Sprintf("no se pudo leer la transferencia %s: %v", id, err))
-		return
+		return false
 	}
 	cambio(t)
+	return true
 }
 
 // ConsultarCambios trae de Rumbo lo que cambió desde la última consulta y lo aplica.
@@ -58,8 +61,22 @@ func (s *Servicio) ConsultarCambios() {
 		s.Registro.Escribir("", "warn", "no se pudieron consultar los cambios de Rumbo: "+err.Error())
 		return
 	}
+	todoGuardado := true
 	for _, n := range novedades {
-		s.conLock(n.TransferenciaID, func(t *dominio.Transferencia) { s.aplicar(t, n) })
+		leida := s.conLock(n.TransferenciaID, func(t *dominio.Transferencia) {
+			if !s.aplicar(t, n) {
+				todoGuardado = false
+			}
+		})
+		if !leida {
+			todoGuardado = false
+		}
+	}
+	// Si algún cambio no se pudo guardar, no avanzamos la fecha: la próxima consulta lo vuelve a traer.
+	// Si no, un traslado COMPLETADO que no se guardó no se vería nunca más y el stock no se movería.
+	if !todoGuardado {
+		s.Registro.Escribir("", "warn", "no se guardaron todos los cambios de Rumbo; la próxima consulta los vuelve a traer")
+		return
 	}
 	if err := s.Repo.GuardarUltimaConsulta(hasta); err != nil {
 		s.Registro.Escribir("", "error", "no se pudo guardar la última consulta a Rumbo: "+err.Error())
@@ -182,24 +199,28 @@ func (s *Servicio) cancelar(t *dominio.Transferencia) {
 }
 
 // aplicar actualiza la transferencia con lo que informó Rumbo, la guarda y, si cambió de estado, lo publica.
-func (s *Servicio) aplicar(t *dominio.Transferencia, n dominio.Novedad) {
+func (s *Servicio) aplicar(t *dominio.Transferencia, n dominio.Novedad) bool {
 	if s.trasladoSuelto(t, n) {
-		return
+		return true
 	}
 	anterior := t.Estado
 	if !t.Aplicar(n, s.Ahora()) {
-		s.guardar(t)
-		return
+		return s.guardar(t)
 	}
 	s.Registro.Escribir(t.TrackID, "info", fmt.Sprintf("transferencia %s: %s -> %s", t.ID, anterior, t.Estado))
-	s.guardarYPublicar(t)
+	return s.guardarYPublicar(t)
 }
 
 // trasladoSuelto se fija si Rumbo tiene programado el traslado de una transferencia que de nuestro lado
 // ya terminó. Pasa si el usuario la canceló mientras no sabíamos si Rumbo había recibido el pedido.
 // Lo cancelamos en Rumbo, así el lugar de la franja queda libre para los demás grupos.
+// Un dato más viejo que el último que aplicamos no cuenta: la consulta de cambios puede traer el
+// traslado todavía programado mientras el otro proceso ya lo estaba cancelando.
 func (s *Servicio) trasladoSuelto(t *dominio.Transferencia, n dominio.Novedad) bool {
 	if !t.Estado.LiberaLaReserva() || n.Estado != dominio.Programada {
+		return false
+	}
+	if t.ActualizadoEnRumbo != nil && n.ActualizadoEn.Before(*t.ActualizadoEnRumbo) {
 		return false
 	}
 	if t.CancelacionPorEnviar == nil {
@@ -221,8 +242,10 @@ func (s *Servicio) guardar(t *dominio.Transferencia) bool {
 }
 
 // guardarYPublicar publica recién después de guardar: así un evento nunca anuncia algo que no quedó guardado.
-func (s *Servicio) guardarYPublicar(t *dominio.Transferencia) {
-	if s.guardar(t) {
-		s.publicar(t)
+func (s *Servicio) guardarYPublicar(t *dominio.Transferencia) bool {
+	if !s.guardar(t) {
+		return false
 	}
+	s.publicar(t)
+	return true
 }

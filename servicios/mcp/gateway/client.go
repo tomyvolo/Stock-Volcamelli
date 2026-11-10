@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// Timeout es lo que esperamos a cada llamada: un poco más que los 2 segundos que el gateway
-// les da a los servicios, para recibir su respuesta en lugar de cortar antes.
-const Timeout = 3 * time.Second
+// Timeout es lo que esperamos a cada llamada: un poco más que lo que el gateway les da a los servicios
+// (5 segundos para crear una transferencia, 2 para el resto), para recibir su respuesta en lugar de cortar antes.
+const Timeout = 6 * time.Second
 
 // Client llama al gateway. No tiene permisos propios: usa siempre el token que recibe.
 type Client struct {

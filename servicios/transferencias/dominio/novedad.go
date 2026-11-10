@@ -24,14 +24,16 @@ type Novedad struct {
 // Rumbo informa las fechas al segundo y en un mismo segundo puede haber dos cambios; si es el mismo
 // dato repetido, no cambia nada.
 func (t *Transferencia) Aplicar(n Novedad, ahora time.Time) bool {
-	if t.Estado.EsFinal() {
-		return false
-	}
 	if t.ActualizadoEnRumbo != nil && n.ActualizadoEn.Before(*t.ActualizadoEnRumbo) {
 		return false
 	}
 	actualizado := n.ActualizadoEn
 	t.ActualizadoEnRumbo = &actualizado
+	// Una transferencia que ya terminó no cambia más, pero guardamos la fecha igual: así un dato más
+	// viejo que llegue después tampoco se toma como un traslado suelto.
+	if t.Estado.EsFinal() {
+		return false
+	}
 
 	if n.IDRumbo != "" {
 		t.IDRumbo = n.IDRumbo
