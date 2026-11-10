@@ -25,7 +25,7 @@ Todas las pruebas entran por el gateway, con un token, igual que un usuario real
 |---|---|---|---|
 | **Consultas del contrato** | El otro grupo y nuestras pantallas consultando el stock de una sucursal | Ver cuántas consultas por segundo aguanta el sistema dentro del objetivo de 500 ms de p95 ([ADR-011](ADR-011-observabilidad.md)) | Abajo |
 | **Una y dos instancias** | El mismo escenario con una sola instancia de Inventario y con dos | Ver si la segunda instancia sube la capacidad | Abajo |
-| **Sucursales y usuarios, con y sin caché** | Usuarios abriendo la sección de sucursales y creando transferencias (cada una pide dos sucursales), una vez con `CACHE_ENABLED=false` y otra con la caché prendida | Medir cuánto mejora la caché y cuántas consultas les saca a los MySQL de Usuarios y Sucursales | Se mide con Sucursales y la caché |
+| **Sucursales y usuarios, con y sin caché** | Usuarios abriendo la sección de sucursales y creando transferencias (cada una pide dos sucursales), una vez con `CACHE_ENABLED=false` y otra con la caché prendida | Medir cuánto mejora la caché y cuántas consultas les saca a los MySQL de Usuarios y Sucursales | Abajo |
 | **Reservas concurrentes** | Muchas transferencias del mismo producto y la misma sucursal al mismo tiempo, mientras siguen las consultas | Ver cuánto aguantan las reservas con `FOR UPDATE` sobre la misma fila, y comprobar que el stock nunca queda negativo | Se mide con Transferencias |
 | **Búsqueda** | Búsquedas con texto y filtro de proveedor | Ver la respuesta de Solr y su atraso mientras se modifican productos | Se mide con Solr |
 
@@ -113,6 +113,24 @@ Creíamos que el primer límite iba a ser el MySQL de Inventario, porque las dos
 2. **Escribir los logs en segundo plano:** que `Write` deje el log en un channel con buffer y una goroutine los inserte por lotes. Así el pedido no espera al MySQL de logs. Si el buffer se llena, se descarta el log y se avisa por consola, como hoy cuando falla el `INSERT`.
 3. **Repetir la medición** con esos cambios y comparar.
 4. **Correr el generador en otra máquina** cuando el sistema esté desplegado, para que no compita por la CPU.
+
+### Caché de Sucursales y Usuarios, con y sin (10/11/2026)
+Las tres consultas que pasan por la caché ([ADR-007](ADR-007-cache.md)), 20 segundos cada una con 20 workers, en la misma notebook. El gateway corrió con `RATE_LIMIT_PER_MINUTE=0`, porque todos los pedidos salen de la misma IP y el control de tráfico los habría cortado ([ADR-010](ADR-010-resiliencia.md)). Las consultas a MySQL son los `SELECT` que contó cada base durante la corrida.
+
+| Consulta | Caché | Pedidos por segundo | p50 | p95 | Consultas a MySQL |
+|---|---|---|---|---|---|
+| Una sucursal (`GET /api/branches/1`) | No | 80,6 | 198 ms | 578 ms | 1626 |
+| Una sucursal | Sí | 75,1 | 216 ms | 664 ms | 11 |
+| Todas las sucursales (`GET /api/branches`) | No | 51,9 | 225 ms | 1107 ms | 1094 |
+| Todas las sucursales | Sí | 99,4 | 174 ms | 416 ms | 10 |
+| Usuarios de una sucursal (`GET /api/users?branchId=1`) | No | 77,2 | 200 ms | 583 ms | 1566 |
+| Usuarios de una sucursal | Sí | 117,8 | 145 ms | 320 ms | 10 |
+
+Lo que vemos:
+- **La caché le saca a MySQL más del 99 % de las consultas**: de entre 1.100 y 1.600 a unas 10 por corrida. Es lo que más buscábamos: los MySQL de Usuarios y Sucursales quedan libres para el login y las escrituras.
+- **En las listas, la respuesta mejora mucho.** Con todas las sucursales, el p95 bajó de 1107 a 416 ms y se atendieron casi el doble de pedidos por segundo. Con los usuarios de una sucursal, el p95 bajó de 583 a 320 ms y los pedidos por segundo subieron un 50 %.
+- **Con una sucursal por id casi no cambia**, y la corrida con caché salió apenas peor, dentro de lo que varía una corrida a otra. Buscar una fila por su clave primaria ya es muy rápido en MySQL, así que el tiempo se va en el resto del camino: el gateway, el salto entre servicios y los logs que cada pedido escribe en el MySQL de logs.
+- Los tiempos son más altos que en la medición del 23/10 porque ahora corren más contenedores en la misma notebook (frontend, asistente, servidor MCP). Sirven para comparar con y sin caché entre sí, no con aquella medición.
 
 ### Cómo escalaríamos
 Según qué se sature:

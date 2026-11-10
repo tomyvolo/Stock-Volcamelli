@@ -24,7 +24,7 @@ El sistema permite:
 - Seguir cada transferencia hasta que llega: franja de llegada, viaje en curso y demoras.
 - Cancelar una transferencia mientras el viaje no empezó.
 - Consultar el historial de movimientos de un producto en una sucursal.
-- Buscar en el catálogo por texto y proveedor, con los resultados ordenados por relevancia.
+- Buscar en el catálogo por texto y proveedor, con los resultados ordenados por relevancia o por nombre.
 - Ver los productos con stock bajo (5 unidades disponibles o menos) de una sucursal.
 - Que otro grupo consulte nuestro catálogo y stock mediante un contrato.
 - Consultar stock, buscar productos, crear transferencias y ver su estado conversando con un asistente desde el frontend. Las transferencias que pide el asistente se crean solo si el usuario las confirma.
@@ -164,7 +164,7 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 **CA-13 — Reservas que se cruzan.** Dado que el origen tiene 5 unidades disponibles, cuando dos vendedores crean al mismo tiempo transferencias de 4 unidades cada una, entonces solo una queda `RESERVADA` y la otra queda `SIN_STOCK`.
 
-**CA-14 — Inventario no responde.** Cuando Inventario no responde a tiempo al crear una transferencia, entonces la transferencia queda `FALLIDA` y, al final, el origen tiene el mismo stock disponible que antes de crearla.
+**CA-14 — Inventario no responde.** Cuando Inventario no responde a tiempo al reservar el stock de una transferencia, entonces la transferencia queda `FALLIDA` y, al final, el origen tiene el mismo stock disponible que antes de crearla. Si Inventario ya no responde a la consulta del producto, que es antes de reservar, la transferencia no se crea y el usuario recibe un `503` que dice que no se pudo crear porque Sucursales o Inventario no respondió.
 
 **CA-15 — Aviso repetido.** Cuando Inventario recibe dos veces el mismo aviso de que un traslado se completó, entonces mueve el stock una sola vez.
 

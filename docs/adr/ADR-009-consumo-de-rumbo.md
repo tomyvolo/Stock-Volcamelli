@@ -66,6 +66,8 @@ Si Rumbo informa un estado que no está en esta tabla, lo dejamos registrado en 
 
 Si aparece un traslado de una transferencia que de nuestro lado ya terminó, lo cancelamos en Rumbo. Pasa cuando el usuario cancela mientras no sabíamos si el pedido le había llegado a Rumbo: la cancelamos de nuestro lado y, si resulta que Rumbo sí lo había reservado, liberamos ese lugar de la franja para los demás grupos.
 
+Antes de tomarlo como suelto miramos la fecha del dato. La consulta de cambios y el envío de las cancelaciones corren por separado, así que la consulta puede traer el traslado todavía `PROGRAMADO` justo cuando el envío ya lo estaba cancelando. Ese dato es más viejo que la cancelación confirmada y lo ignoramos. Por eso guardamos la fecha del último dato de Rumbo también cuando la transferencia ya terminó. Lo encontramos probando contra el Rumbo real: mandábamos una segunda cancelación con la misma clave y otro motivo, y Rumbo la rechazaba con `409`.
+
 ### Cancelación
 El usuario cancela desde nuestro frontend y escribe un motivo:
 

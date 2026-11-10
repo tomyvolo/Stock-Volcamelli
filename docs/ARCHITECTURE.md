@@ -17,7 +17,7 @@ Cada servicio es dueño de sus datos y nadie lee la base de otro. Los servicios 
 
 Además nos integramos con otros dos grupos. A uno le ofrecemos consultar nuestro catálogo y stock (sección 9). Del otro usamos Rumbo, su servicio de traslados, en cada transferencia (secciones 8 y 9).
 
-Por encima de esto sumamos dos funcionalidades: un asistente en el frontend que opera el sistema conversando, y actualizaciones de las pantallas en tiempo real. Son tres servicios más (Asistente, servidor MCP y Tiempo Real), descriptos en la sección 11.
+Por encima de esto sumamos dos funcionalidades: un asistente en el frontend que opera el sistema conversando, y actualizaciones de las pantallas en tiempo real. Son tres servicios más (Asistente, servidor MCP y Tiempo Real), descriptos en la sección 12.
 
 Los diagramas están en [diagramas/contexto.md](diagramas/contexto.md) y [diagramas/contenedores.md](diagramas/contenedores.md).
 
@@ -27,7 +27,7 @@ Los diagramas están en [diagramas/contexto.md](diagramas/contexto.md) y [diagra
 |---|---|
 | Backend de los servicios | Go con Gin para la API HTTP y GORM para MySQL. Transferencias usa el driver oficial de MongoDB para Go |
 | API Gateway | Go con Gin, hecho por nosotros |
-| Frontend | React |
+| Frontend | React con Vite, servido por NGINX |
 | Bases de datos | MySQL 8.4 (un contenedor por servicio) y MongoDB |
 | Mensajería | RabbitMQ |
 | Autenticación | JWT firmado con HS256 (`golang-jwt`) y contraseñas guardadas con bcrypt |
@@ -44,11 +44,12 @@ Elegimos Go para todos los servicios y para el gateway, así todo el equipo trab
 
 ## 3. API Gateway
 
-Es la única puerta de entrada al sistema, tanto para nuestro frontend como para el grupo que consume nuestro catálogo. Lo hacemos nosotros en Go con Gin y no tiene lógica de negocio ni base de datos. Hace tres cosas:
+Es la única puerta de entrada al sistema, tanto para nuestro frontend como para el grupo que consume nuestro catálogo. Lo hacemos nosotros en Go con Gin y no tiene lógica de negocio ni base de datos. Hace cuatro cosas:
 
-1. **Valida el token.** Todos los pedidos, salvo el login, tienen que traer un JWT en `Authorization: Bearer <token>`. El gateway verifica la firma y que no esté vencido. Si falla, responde `401` y el pedido no llega a ningún servicio. El token lo emite Usuarios en el login.
-2. **Controla los permisos por rol.** Si el rol no puede hacer esa operación, responde `403`. Por ejemplo, los ajustes de stock no los puede hacer un `VENDEDOR`. Al servicio le pasa el id, el rol y la sucursal del usuario, sacados del token, en los headers `X-User-ID`, `X-User-Role` y `X-User-Branch`. El control por sucursal (que la transferencia pase por la sucursal del vendedor, por ejemplo) lo hace cada servicio, porque necesita los datos del pedido.
-3. **Redirige cada pedido al servicio que corresponde**, según la ruta:
+1. **Controla el tráfico.** Acepta hasta 300 pedidos por minuto de cada IP. Los que sobran reciben `429` con `Retry-After` y no llegan a ningún servicio. Se controla antes que el token, así también frena a quien prueba contraseñas en el login. El detalle está en [ADR-010](adr/ADR-010-resiliencia.md).
+2. **Valida el token.** Todos los pedidos, salvo el login, tienen que traer un JWT en `Authorization: Bearer <token>`. El gateway verifica la firma y que no esté vencido. Si falla, responde `401` y el pedido no llega a ningún servicio. El token lo emite Usuarios en el login.
+3. **Controla los permisos por rol.** Si el rol no puede hacer esa operación, responde `403`. Por ejemplo, los ajustes de stock no los puede hacer un `VENDEDOR`. Al servicio le pasa el id, el rol y la sucursal del usuario, sacados del token, en los headers `X-User-ID`, `X-User-Role` y `X-User-Branch`. El control por sucursal (que la transferencia pase por la sucursal del vendedor, por ejemplo) lo hace cada servicio, porque necesita los datos del pedido.
+4. **Redirige cada pedido al servicio que corresponde**, según la ruta:
 
    | Ruta | Servicio |
    |---|---|
@@ -255,7 +256,7 @@ Lo que sabemos que el sistema no resuelve, o resuelve de una forma más simple d
 ### Del diseño
 | Limitación | Por qué la aceptamos | Qué haríamos si hiciera falta |
 |---|---|---|
-| Transferencias y Tiempo Real corren en una sola instancia | Transferencias hace la consulta de cambios a Rumbo y usa un lock en memoria; Tiempo Real tiene las conexiones abiertas en su memoria. Con dos, habría que coordinarlas | Un lock en MongoDB para los procesos de fondo y repartir las conexiones entre instancias ([ADR-009](adr/ADR-009-consumo-de-rumbo.md), [ADR-019](adr/ADR-019-tiempo-real.md)) |
+| Transferencias y Tiempo Real corren en una sola instancia | Transferencias hace la consulta de cambios a Rumbo y usa locks en memoria; Tiempo Real tiene las conexiones abiertas en su memoria. Con dos, habría que coordinarlas | Un lock en MongoDB para los procesos de fondo y repartir las conexiones entre instancias ([ADR-009](adr/ADR-009-consumo-de-rumbo.md), [ADR-019](adr/ADR-019-tiempo-real.md)) |
 | Si RabbitMQ no está al publicar un evento, después de 4 intentos queda en el log de error para publicarlo a mano | No se pierden unidades: quedan reservadas hasta que se publica. Evitarlo pedía una tabla y un proceso más en cada servicio | Guardar el evento junto con el cambio y publicarlo desde ahí (outbox, [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)) |
 | La sucursal y el rol van en el token, que dura 1 hora y no se puede revocar | Evita consultar Usuarios en cada pedido | Tokens más cortos con renovación, o una lista de tokens revocados en Memcached |
 | La caché de Usuarios y Sucursales no se borra cuando un dato cambia | Un cambio tarda como mucho 60 segundos en verse, y los permisos no salen de la caché ([ADR-007](adr/ADR-007-cache.md)) | Borrar la clave al guardar |
@@ -275,7 +276,7 @@ Lo que sabemos que el sistema no resuelve, o resuelve de una forma más simple d
 | `EN_CURSO` y `COMPLETADO` los marca a mano un operador de Rumbo | El viaje completo no avanza solo. Para mostrarlo dependemos de que alguien del otro grupo lo marque |
 | El cupo de cada franja de Rumbo lo comparten todos los grupos | Las transferencias de prueba ocupan lugar, así que las cancelamos al terminar |
 | Nos enteramos de los cambios de Rumbo con hasta 60 segundos de atraso | Rumbo no avisa: hay que consultarlo, y su contrato pide no más de una vez por minuto |
-| Inventario publicado corre en los planes gratis de Render y de Aiven | Render se duerme a los 15 minutos sin pedidos y Aiven apaga la base si no tiene actividad. Un cron-job consulta el catálogo cada 10 minutos para mantener los dos despiertos. Si la base se apaga igual, Inventario responde `503` hasta que se prende. Aiven retira el MySQL gratis el 21/12/2026 |
+| Inventario publicado corre en los planes gratis de Render y de Aiven | Render se duerme a los 15 minutos sin pedidos y Aiven apaga la base si no tiene actividad. Un cron-job consulta el catálogo cada 10 minutos para mantener los dos despiertos. Si la base se apaga igual, Inventario se reinicia hasta que la base vuelve. Aiven retira el MySQL gratis el 21/12/2026 |
 | El asistente usa el plan gratis de Groq | Tiene un límite de pedidos por minuto y por día. Si se pasa, el chat dice que el asistente no está disponible. El modelo también puede entender mal una pregunta; para crear, está la confirmación ([ADR-018](adr/ADR-018-asistente.md)) |
 
 ### Deuda técnica

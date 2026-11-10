@@ -57,6 +57,7 @@ La primera vez tarda un par de minutos, porque los MySQL cargan sus tablas y dat
 
 | Qué | Dónde |
 |---|---|
+| Frontend | `http://localhost:8000` |
 | Gateway (la única entrada a la API) | `http://localhost:8080` |
 | Grafana (usuario `admin`, contraseña `admin`) | `http://localhost:3000`, tablero "Stock Volcamelli" |
 | Prometheus | `http://localhost:9090` |
@@ -64,6 +65,8 @@ La primera vez tarda un par de minutos, porque los MySQL cargan sus tablas y dat
 Hay un usuario de prueba por rol: `director@volcamelli.com`, `admin1@volcamelli.com`, y `vendedor1@volcamelli.com`. Las contraseñas no están en el repositorio; las tiene el equipo.
 
 Para empezar de cero (borra los datos de los MySQL): `docker compose down -v`.
+
+Para trabajar en el frontend sin reconstruir su imagen, con el resto del sistema levantado: `cd frontend`, `npm install` y `npm run dev`. Queda en `http://localhost:5173` y le pasa `/api` al gateway. Los tests del frontend se corren con `npm run test:run`.
 
 ### Cómo probarlo
 
@@ -104,14 +107,14 @@ curl -X POST http://localhost:8080/api/branches/1/products/1/adjustments \
 
 Responde el total, lo reservado y el disponible que quedaron. Una salida que dejaría el total por debajo de lo reservado responde `409`. Cada ajuste queda en el historial del producto en esa sucursal: `GET /api/branches/1/products/1/movements`. El director también da de alta productos con `POST /api/products` y los modifica con `PUT /api/products/{id}`, con un body como `{"name": "Polenta", "description": "Paquete de 500 g", "supplier": null}`.
 
-Cualquier rol busca productos por texto, en el nombre y la descripción, ordenados por relevancia:
+Cualquier rol busca productos por texto, en el nombre y la descripción, ordenados por relevancia o por nombre:
 
 ```bash
 curl "http://localhost:8080/api/products/search?q=harina&supplier=Molinos%20del%20Sur&page=1&size=20" \
   -H "Authorization: Bearer <token>"
 ```
 
-`q` es obligatorio y `supplier` filtra por el nombre exacto del proveedor. Cuando se crea o se modifica un producto, aparece en la búsqueda en unos segundos.
+`q` es obligatorio, `supplier` filtra por el nombre exacto del proveedor y `sort=nombre` ordena de la A a la Z (si no viene, por relevancia). Cuando se crea o se modifica un producto, aparece en la búsqueda en unos segundos.
 
 Cualquier usuario puede crear una transferencia que salga de su sucursal o llegue a ella. El director, con cualquier sucursal:
 
@@ -196,7 +199,7 @@ Stock-Volcamelli/
 │   ├── adr/
 │   ├── contracts/
 │   └── diagramas/
-├── frontend/
+├── frontend/           → React con Vite, servido por NGINX
 ├── gateway/
 ├── servicios/
 │   ├── usuarios/

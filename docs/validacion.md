@@ -2,7 +2,7 @@
 
 Pruebas sobre el sistema levantado con Docker Compose. Respaldan lo que dicen los ADR: la validación de D1, D3 y D5 ([ADR-014](adr/ADR-014-limites-de-servicios.md), [ADR-015](adr/ADR-015-persistencia.md) y [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)), el balanceo ([ADR-012](adr/ADR-012-balanceo-de-carga.md)) y la capacidad ([ADR-013](adr/ADR-013-capacidad-y-costos.md)).
 
-Las secciones 1 a 7 son de la primera validación. De la 8 en adelante están las pruebas de lo que sumamos después: los tests, la caída del MySQL de logs, tiempo real, el asistente, y Rumbo real. Lo que todavía no corrimos está en la sección 13, con lo que tiene que dar cada prueba.
+Las secciones 1 a 7 son de la primera validación. De la 8 en adelante están las pruebas de lo que sumamos después: los tests, la caída del MySQL de logs, tiempo real, el asistente, Rumbo real, el frontend, la concurrencia, los eventos, las caídas y la búsqueda, y la medición de la caché con el control de tráfico. Lo que todavía no corrimos está en la sección 16, con lo que tiene que dar cada prueba.
 
 ## 1. Login y alta de usuarios
 
@@ -146,6 +146,16 @@ Validación de [ADR-018](adr/ADR-018-asistente.md).
 
 **Modelo.** Probamos la clave de Groq el 8/11/2026. El modelo que habíamos elegido (`llama-3.3-70b-versatile`) ya no estaba disponible. De los que sí estaban, probamos los tres que pueden usar herramientas (`openai/gpt-oss-120b`, `openai/gpt-oss-20b` y `qwen/qwen3.8-27b`) con la pregunta "¿Qué stock hay en la sucursal Centro?". Los tres pidieron primero `listar_sucursales`, en lugar de inventar el id, en menos de un segundo. Elegimos `openai/gpt-oss-120b`. Con el resultado de la herramienta, respondió "Las sucursales son: Centro, Nueva Córdoba y Cerro".
 
+**De punta a punta.** El 9/11/2026, con todo el sistema levantado y el token del director, por `/api/assistant/chat` a través del frontend:
+
+| Prueba | Resultado |
+|---|---|
+| "¿Cuánta Harina 000 hay en Córdoba Centro?" | "En la sucursal Córdoba Centro hay 313 unidades de Harina 000", que es el disponible real. Tardó 3 segundos |
+| "Pasá 2 Harina 000 de Córdoba Centro a Nueva Córdoba" | Devolvió la tarjeta con producto, cantidad, origen y destino, y no creó nada |
+| Confirmar la tarjeta en `/api/assistant/confirm` | Creó la transferencia, que pasó a `PROGRAMADA` con el proceso de fondo |
+
+La primera vez que lo probamos contestó que la búsqueda no estaba disponible: Solr tardó en responder las primeras consultas después de arrancar e Inventario cortó por tiempo. Unos minutos después la misma pregunta anduvo.
+
 ## 12. Rumbo real
 
 Validación de [ADR-009](adr/ADR-009-consumo-de-rumbo.md), contra `https://rumbo-gateway.onrender.com` (contrato 4.0.1), el 8/11/2026:
@@ -156,23 +166,162 @@ Validación de [ADR-009](adr/ADR-009-consumo-de-rumbo.md), contra `https://rumbo
 | `POST /auth/token` con las credenciales del grupo | `200`, token `Bearer` por 3600 segundos |
 | `GET /disponibilidad?fecha=2026-11-09` | Las 6 franjas, de 8 a 20, con lugar para 4 traslados cada una |
 
-Estas pruebas no reservan nada. La reserva y la cancelación de punta a punta están en la sección 13.
+Estas pruebas no reservan nada.
 
-## 13. Pruebas que faltan correr
+**Reserva de punta a punta.** El 9/11/2026 a las 15:16, con todo el sistema levantado, creamos una transferencia de 3 Harina 000 de Córdoba Centro a Nueva Córdoba, sin hora pedida:
+
+| Qué | Resultado |
+|---|---|
+| Al crearla | `201` en estado `RESERVADA`, y el disponible del origen bajó de 316 a 313 |
+| A los 5 segundos | `PROGRAMADA` en la franja de 18 a 20 del mismo día, la primera que respeta las 2 horas de anticipación |
+| Tiempo Real | Llegaron `StockActualizado` con 313 y un `TransferenciaActualizada` por cada estado |
+
+La dejamos programada.
+
+**Cancelación de punta a punta.** Un vendedor de Villa Carlos Paz (sucursal 3) creó una transferencia de 2 Harina 000 a Córdoba Centro, que quedó `PROGRAMADA` en 5 segundos, y la canceló:
+
+| Qué | Resultado |
+|---|---|
+| Stock del origen | 10 antes, 8 con la transferencia reservada y 10 otra vez después de cancelar |
+| Rumbo | Confirmó la cancelación y la transferencia quedó `CANCELADA` |
+| El pedido de cancelar | Respondió `503` aunque la cancelación se aplicó: el usuario esperaba el lock que tenía el proceso de fondo mientras le hablaba a Rumbo, y el gateway corta a los 2 segundos |
+| Los logs | Mandamos una segunda cancelación que Rumbo rechazó con `409 CLAVE_IDEMPOTENCIA_REUTILIZADA`: la consulta de cambios había traído el traslado todavía programado mientras el envío lo cancelaba |
+
+Los dos errores eran nuestros. Pasamos a un lock por transferencia ([ADR-004](adr/ADR-004-consistencia-y-concurrencia.md)) e ignoramos los datos de Rumbo más viejos que la cancelación confirmada ([ADR-009](adr/ADR-009-consumo-de-rumbo.md)), cada uno con su test.
+
+**Con los arreglos.** Reconstruimos Transferencias y repetimos la prueba con el mismo vendedor:
+
+| Qué | Resultado |
+|---|---|
+| El pedido de cancelar | `200` en 0,08 segundos, con la cancelación pedida |
+| Rumbo | Respondió `503` tres veces seguidas. Reintentamos cada 10 segundos con la misma clave y a la cuarta la aceptó: `CANCELADA` unos 30 segundos después de pedirla |
+| Stock del origen | 10 antes, 8 con la reserva y 10 después |
+| Los logs | Una sola cancelación aceptada, sin traslados sueltos ni `409` |
+
+## 13. Frontend
+
+El 9/11/2026, con `docker compose up --build -d` y entrando por `http://localhost:8000`:
+
+| Prueba | Resultado |
+|---|---|
+| La página y una ruta interna (`/transferencias`) | `200`, NGINX devuelve la aplicación y los archivos de `assets` |
+| `/api` a través del frontend | Llega al gateway: sin token `401`, con token responde |
+| Login del director | Token con el rol y sin sucursal |
+| Ajuste de entrada de 10 unidades | `200` y el evento `StockActualizado` llegó en el momento por `/api/events` |
+| Transferencia y asistente | Las de las secciones 11 y 12 se hicieron por acá |
+
+**Permisos por rol.** Con el director creamos un admin y un vendedor de la sucursal 3, entramos con cada uno y probamos lo que pide la especificación:
+
+| Rol | Lo que pudo | Lo que se rechazó con `403` |
+|---|---|---|
+| Vendedor de la 3 (CA-19) | Ver productos, el stock de otra sucursal, las sucursales y los usuarios; crear y cancelar una transferencia de la 3 a la 1 | Ajustar stock, crear un producto, una sucursal o un usuario, y crear una transferencia de la 1 a la 2 |
+| Admin de la 3 (CA-21) | Ajustar stock en la 3 y crear un vendedor de la 3 | Ajustar stock en la 1, crear un vendedor de la 1, crear un admin, una sucursal o un producto |
+
+Las 18 pruebas dieron lo esperado.
+
+## 14. Concurrencia, eventos, caídas y búsqueda
+
+El 9/11/2026, con todo el sistema levantado y el token del director.
+
+**Reservas que se cruzan (CA-13).** Con un ajuste dejamos 5 disponibles de Azúcar en Nueva Córdoba y mandamos al mismo tiempo dos transferencias de 4 a Córdoba Centro. Una quedó `RESERVADA` y la otra `SIN_STOCK`, y el origen quedó con 1 disponible. El `FOR UPDATE` de la reserva hace esperar a la segunda hasta que termina la primera ([ADR-004](adr/ADR-004-consistencia-y-concurrencia.md)).
+
+**Evento repetido (CA-15).** Cancelamos la transferencia reservada, Transferencias publicó `TrasladoCancelado` e Inventario liberó la reserva. Después publicamos a mano el mismo mensaje, con el mismo `id`, desde la API del panel de RabbitMQ, como si RabbitMQ lo entregara dos veces. Inventario lo recibió y lo confirmó, pero no cambió nada: el disponible siguió en 5 y los movimientos del producto en 6. Usamos `TrasladoCancelado` y no `TrasladoCompletado` porque completar un traslado lo decide Rumbo, y publicar un `TrasladoCompletado` inventado dejaba a Inventario y a Transferencias diciendo cosas distintas. Los dos eventos pasan por el mismo control, que anota el `id` del evento en la misma transacción que el cambio de stock.
+
+**Mensaje que no se puede procesar (DLQ).** Publicamos un `TrasladoCompletado` de una transferencia que no existe. Quedó en `q.inventario.TrasladoCompletado.dlq` con el log de error "va a la cola de errores: no hay una reserva para esa transferencia".
+
+**Inventario no responde (CA-14).** Apagamos las dos instancias de Inventario y creamos una transferencia:
+
+| Qué | Resultado |
+|---|---|
+| La transferencia | No se creó: Transferencias pide el producto a Inventario antes de reservar, y esa consulta no respondió |
+| Stock del origen | 5 antes y 5 después de prender Inventario de nuevo |
+| Lo que vio el usuario | `503` del gateway a los 2,07 segundos. Transferencias respondió su propio error a los 2,3 segundos, cuando el gateway ya había cortado |
+
+Cambiamos dos cosas. El gateway ahora espera 5 segundos al crear o cancelar una transferencia, así llega la respuesta de Transferencias ([ADR-010](adr/ADR-010-resiliencia.md)). Y CA-14 ahora distingue los dos casos: si Inventario deja de responder justo al reservar, la transferencia queda `FALLIDA`; si ya no responde antes, no se crea. En los dos el stock no cambia.
+
+Con el gateway reconstruido repetimos la prueba: el usuario recibió el `503` de Transferencias a los 2,2 segundos, con el mensaje "No se pudo crear la transferencia porque Sucursales o Inventario no respondió. Probá de nuevo en unos minutos.", y el stock siguió en 5.
+
+**Rumbo caído.** Reiniciamos Transferencias con una `RUMBO_URL` que rechaza la conexión y creamos dos transferencias:
+
+| Qué | Resultado |
+|---|---|
+| Las transferencias | Quedaron `RESERVADA` |
+| A los 20 segundos | 5 fallas seguidas, `rumbo_circuit_opens_total` en 1 y el log "Rumbo falló 5 veces seguidas: no lo llamamos por 30s" |
+| Durante esos 30 segundos | `rumbo_errors_total` siguió en 5: no se llamó a Rumbo |
+| Medio abierto | La llamada de prueba fue la consulta de cambios. Falló, y el circuit breaker se volvió a abrir (2 aperturas, 6 errores) |
+| Con la `RUMBO_URL` real de nuevo | Las dos pasaron solas a `PROGRAMADA` en menos de 15 segundos. Después las cancelamos |
+
+**Búsqueda (D6).**
+
+| Prueba | Resultado |
+|---|---|
+| `q=harina` | Harina 000 y Harina integral |
+| `q=aceite` con proveedor Aceitera Central / Molinos del Sur | Aceite de girasol / ninguno |
+| `q=harina` de a 1 por página | Página 1 Harina 000, página 2 Harina integral, total 2 |
+| Sin `q` | `400` "El parámetro q es obligatorio" |
+| Renombrar Harina integral | Apareció en la búsqueda a los 3,5 segundos; al volver el nombre, a los 1,9 |
+| `docker compose restart inventario1` (reconstrucción) | Solr con 13 productos, los mismos nombres que MySQL |
+
+Las primeras búsquedas después de un rato sin uso respondieron `503`: Solr tardó más de los 2 segundos que le da Inventario. Ya nos había pasado con el asistente (sección 11). Antes de una demo conviene hacer una búsqueda para que Solr cargue sus cachés.
+
+**Inventario publicado (D8).** Contra `https://stock-volcamelli.onrender.com`:
+
+| Prueba | Resultado |
+|---|---|
+| Sin API key o con una equivocada | `401` "Falta la API key o no es válida", también en aumentar |
+| Las cuatro consultas con la key | `200` con los productos, un producto, el stock de la sucursal y el de un producto |
+| Aumentar 2 y reducir 2 | `200`: el disponible pasó de 0 a 2 y volvió a 0 |
+| Producto que no existe | `404` `PRODUCT_NOT_FOUND` |
+| Reducir más de lo disponible | `409` `INSUFFICIENT_STOCK` |
+| Cantidad 0 | `400` `INVALID_REQUEST` |
+
+**Carga y caché: la corrida no sirvió.** Corrimos los escenarios de ADR-013 y la comparación con y sin caché, pero la notebook estaba saturada: la máquina virtual de Docker en su límite de memoria y menos de 1 GB libre en Windows. Con 10 workers el p95 ya fue de 1,5 segundos, y con 100 workers fallaron casi todos los pedidos (en la primera medición, con 50 workers el p95 quedaba debajo de 130 ms). Con o sin caché, el p95 quedó en los 2 segundos del gateway, así que no se puede comparar. Lo único que sí sirve es el porcentaje de aciertos: 98 % en Usuarios y 97 % en Sucursales. No cambiamos los números de ADR-013; repetimos las dos pruebas con la máquina libre.
+
+## 15. Caché, control de tráfico, orden de la búsqueda y RabbitMQ caído
+
+Corrido el 10/11/2026 con `develop` en `8c05016` más los cambios de ese día, en la misma notebook de ADR-013.
+
+**Caché con y sin (D7).** Cada consulta, 20 segundos con 20 workers, por el gateway y con el control de tráfico apagado (`RATE_LIMIT_PER_MINUTE=0`). Primero con `CACHE_ENABLED=false` y después con la caché prendida, recreando solo Usuarios y Sucursales. Las consultas a MySQL son los `SELECT` que contó cada base durante la corrida (`Com_select`).
+
+| Consulta | Caché | Pedidos por segundo | p50 | p95 | p99 | Consultas a MySQL |
+|---|---|---|---|---|---|---|
+| `GET /api/branches/1` | No | 80,6 | 198 ms | 578 ms | 894 ms | 1626 |
+| `GET /api/branches/1` | Sí | 75,1 | 216 ms | 664 ms | 896 ms | 11 |
+| `GET /api/branches` | No | 51,9 | 225 ms | 1107 ms | 1341 ms | 1094 |
+| `GET /api/branches` | Sí | 99,4 | 174 ms | 416 ms | 488 ms | 10 |
+| `GET /api/users?branchId=1` | No | 77,2 | 200 ms | 583 ms | 770 ms | 1566 |
+| `GET /api/users?branchId=1` | Sí | 117,8 | 145 ms | 320 ms | 517 ms | 10 |
+
+Ningún error en las seis corridas. El análisis está en [ADR-013](adr/ADR-013-capacidad-y-costos.md).
+
+**Control de tráfico (D10).** Con el límite en 300 pedidos por minuto, mandamos 320 pedidos a `GET /api/branches/1` en el mismo minuto, 40 a la vez:
+
+| Resultado | Pedidos |
+|---|---|
+| `200` | 299 |
+| `503` (uno que pasó los 2 segundos, con la máquina cargada) | 1 |
+| `429` `TOO_MANY_REQUESTS` | 20 |
+
+El `429` trae `Retry-After: 17` (los segundos que faltaban para el minuto siguiente) y el mensaje "demasiados pedidos, probá de nuevo en 17 segundos". Pasado el límite, el login también responde `429`. Que otra IP siga entrando lo prueba un test del gateway.
+
+**Orden de la búsqueda (D6).** Con `q=paquete` (7 resultados):
+
+| `sort` | Resultado |
+|---|---|
+| `relevancia` (o sin `sort`) | Arroz largo fino (0,33), Azúcar (0,28) y los demás con 0,26 |
+| `nombre` | Arroz largo fino, Azúcar, Café molido, Fideos tirabuzón, Harina 000, Harina integral, Sal fina |
+| `otro` | `400` "El parámetro sort tiene que ser relevancia o nombre." |
+
+El campo `nombre_orden` se creó solo al arrancar Inventario, sobre el índice que ya existía. El primer intento de crearlo pasó los 2 segundos y la reconstrucción lo reintentó a los 5 segundos.
+
+**Crear con RabbitMQ caído (D10).** Con `docker compose stop rabbitmq`, crear una transferencia de 1 Harina 000 respondió `201` en 0,74 segundos (antes del arreglo, `503` a los 5,1). El disponible bajó de 311 a 310 y los eventos que no se pudieron publicar quedaron en el log de error ("no se pudo publicar TransferenciaActualizada… después de 4 intentos"). Con RabbitMQ de vuelta, cancelarla respondió `200` en 0,03 segundos, quedó `CANCELADA` y el disponible volvió a 311.
+
+## 16. Pruebas que faltan correr
 
 | Prueba | Qué valida | Cómo | Qué tiene que dar |
 |---|---|---|---|
-| Rumbo de punta a punta | D9 | Crear una transferencia sin hora, esperar el proceso de fondo y cancelarla | `RESERVADA`, después `PROGRAMADA` con la franja en `slotStart` y `slotEnd`; al cancelar, `CANCELADA` y el origen vuelve a tener el disponible de antes |
-| Rumbo caído | D9, D10 | Levantar Transferencias con una `RUMBO_URL` que no responde y crear transferencias | Quedan `RESERVADA`; después de 5 fallas sube `rumbo_circuit_opens_total` y no se llama a Rumbo por 30 segundos |
-| Reservas que se cruzan | D4 (CA-13) | Con 5 disponibles, dos transferencias de 4 al mismo tiempo | Una `RESERVADA` y otra `SIN_STOCK`; el origen queda con 1 disponible |
-| Inventario no responde | D4 (CA-14) | `docker compose stop inventario1 inventario2` y crear una transferencia | `FALLIDA`; al volver Inventario, la reserva se libera sola |
-| Evento repetido | D4, D5 (CA-15) | Publicar a mano el mismo `TrasladoCompletado` dos veces desde el panel de RabbitMQ | El stock se mueve una sola vez |
-| Mensaje que no se puede procesar | D5 | Publicar un `TrasladoCompletado` de una transferencia que no existe | Va a `q.inventario.TrasladoCompletado.dlq` y queda el log de error |
-| Caché antes y después | D7 | La carga de sucursales y usuarios con `CACHE_ENABLED=false` y con la caché | El porcentaje de aciertos del tablero y cuánto baja el p95 |
-| Búsqueda | D6 | Buscar con texto, proveedor, orden y página; cambiar un producto; correr la reconstrucción | El cambio aparece en menos de 5 segundos y la reconstrucción deja el índice igual a MySQL |
-| Asistente de punta a punta | ADR-018 | Preguntas de stock y una transferencia desde el chat | Responde con datos de la API y la transferencia se crea recién al confirmar |
-| Inventario publicado | D8 | Las cuatro consultas y aumentar y reducir contra `https://stock-volcamelli.onrender.com`, sin API key y con la key | Sin key, `401`; con la key, las respuestas del contrato |
-| Carga | D13 | El generador de `pruebas/carga`, sin `RUMBO_URL` | Los mismos escenarios de ADR-013, para comparar con la primera medición |
+| Pantallas por rol | CA-19, CA-21 | Entrar al frontend con el vendedor y el admin de prueba | Cada uno ve solo los botones y pantallas de su rol |
+| Carga | D13 | El generador de `pruebas/carga`, con la máquina libre | Los mismos escenarios de ADR-013, para comparar con la primera medición |
 
 ## Cómo repetir estas pruebas
 
@@ -193,4 +342,10 @@ Estas pruebas no reservan nada. La reserva y la cancelación de punta a punta es
 | Con el MySQL de logs apagado, todos los pedidos respondían `503` | Cada log espera como mucho 200 ms y, si no se guarda, sale por consola (sección 9) |
 | Rumbo publicó la versión 4 de su contrato, que reserva franjas en lugar de proponer horarios | Reescribimos el adaptador y ADR-009, y dejamos de usar el Rumbo falso |
 | El modelo elegido para el asistente ya no estaba en Groq | Cambiamos a `openai/gpt-oss-120b` con la variable `MODEL_NAME` (sección 11) |
-| Inventario publicado no respondía: la base de Aiven se había apagado por inactividad, y sin base Inventario se cerraba al arrancar y Render lo reiniciaba sin parar | Inventario arranca sin base y responde `503` hasta que vuelve. Lo probamos con un MySQL apagado: `503` en 3 ms, y unos 30 segundos después de prender MySQL pasó solo a `200`. Para que Aiven no se apague, un cron-job consulta el catálogo cada 10 minutos |
+| Inventario publicado no respondía: la base de Aiven se había apagado por inactividad, y sin base Inventario se cerraba al arrancar y Render lo reiniciaba sin parar | Un cron-job consulta el catálogo cada 10 minutos para que Aiven y Render no se apaguen. Probamos también que Inventario arrancara sin base y respondiera `503` hasta que volviera, y anduvo, pero lo descartamos para que Inventario funcione igual que los demás servicios ([ADR-010](adr/ADR-010-resiliencia.md)) |
+| El frontend en `localhost:8000` respondía `400 Request Header Or Cookie Too Large` | El navegador mandaba las cookies de otros proyectos que habían corrido en `localhost`. Le dimos a NGINX más lugar para los encabezados; nosotros no usamos cookies |
+| Recién levantado el sistema, el asistente decía que la búsqueda no estaba disponible | Solr tardaba en responder las primeras consultas e Inventario cortaba por tiempo. A los pocos minutos anduvo (sección 11) |
+| Con la máquina cargada, Transferencias se cerraba al arrancar: el MySQL de logs tardó más de 2 segundos en decirle si existía la tabla, intentó crearla y falló porque ya estaba | Los 8 servicios abren la conexión de logs sin probarla y crean la tabla en segundo plano, como ya hacía Inventario ([ADR-011](adr/ADR-011-observabilidad.md)) |
+| `docker compose up` fallaba con "mongo-transferencias is unhealthy" aunque Mongo respondía | El chequeo de salud con `mongosh` pasaba los 3 segundos con la máquina cargada. Lo subimos a 10 |
+| Cancelar respondía `503` aunque la cancelación se aplicaba, y se mandaba a Rumbo una cancelación de más | Lock por transferencia, y los datos de Rumbo más viejos que la cancelación se ignoran (sección 12) |
+| Con RabbitMQ caído, crear una transferencia respondía `503` a los 5 segundos aunque quedaba creada y reservada; si el usuario volvía a intentar, la creaba dos veces. Lo encontró una revisión externa | Crear y cancelar publican los eventos en segundo plano, como ya hacía Inventario ([ADR-010](adr/ADR-010-resiliencia.md)). Lo probamos con RabbitMQ apagado: `201` en 0,74 segundos (sección 15) |

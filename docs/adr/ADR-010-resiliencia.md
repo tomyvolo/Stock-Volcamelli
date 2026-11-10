@@ -16,6 +16,8 @@ Ninguna llamada espera para siempre:
 | Llamada | Timeout |
 |---|---|
 | Entre nuestros servicios (HTTP) | 2 segundos |
+| Gateway a Transferencias, al crear o cancelar | 5 segundos. Transferencias espera hasta 2 segundos a Inventario y a Sucursales, y el que espera afuera tiene que esperar más que el de adentro. Con 2 segundos en los dos, cuando Inventario no respondía el gateway cortaba primero y el usuario veía un `503` genérico en lugar de la respuesta de Transferencias |
+| Servidor MCP al gateway | 6 segundos, un poco más que la ruta más lenta, que es crear una transferencia. El Asistente espera 7 al servidor MCP ([ADR-018](ADR-018-asistente.md)) |
 | NGINX a Inventario | 1 segundo para conectar con una instancia; si no conecta, prueba la otra. Para la respuesta, el que trae NGINX: corta antes el timeout de 2 segundos de quien llama |
 | Usuarios y Sucursales a Memcached | El que trae el cliente de Memcached para Go (500 ms) |
 | Inventario a Solr | 2 segundos |
@@ -26,10 +28,19 @@ Ninguna llamada espera para siempre:
 - **Lo que pide el usuario no se reintenta solo.** Si una llamada interna falla mientras el usuario espera, le respondemos el error enseguida. Reintentar ahí solo alarga la espera y suma carga a una pieza que ya está mal.
 - **Las consultas que pasan por NGINX** se reintentan una vez en la otra instancia de Inventario ([ADR-012](ADR-012-balanceo-de-carga.md)).
 - **Los procesos de fondo de Transferencias reintentan en su próxima vuelta.** Liberar una reserva después de un timeout y mandarle reservas y cancelaciones a Rumbo no esperan entre un intento y otro: lo que falla queda pendiente y se vuelve a intentar en la vuelta siguiente, a los 10 segundos. No esperamos ahí adentro porque, mientras el proceso trabaja con una transferencia, la tiene tomada, y el usuario que quiere cancelarla tendría que esperar con él.
-- **Publicar un evento, actualizar Solr y conectarse a RabbitMQ** sí reintentan con backoff exponencial: hasta 4 intentos, esperando 1 segundo, después 2 y después 4 entre uno y otro. Si los 4 fallan, el evento queda en el log de error para publicarlo a mano y el mensaje de Solr va a la cola de errores.
+- **Publicar un evento, actualizar Solr y conectarse a RabbitMQ** sí reintentan con backoff exponencial: hasta 4 intentos, esperando 1 segundo, después 2 y después 4 entre uno y otro. Si los 4 fallan, el evento queda en el log de error para publicarlo a mano y el mensaje de Solr va a la cola de errores. Cuando el evento sale de un pedido del usuario (crear un producto, crear o cancelar una transferencia), se publica en segundo plano y el usuario recibe la respuesta enseguida. Al principio Transferencias lo publicaba dentro del pedido: con RabbitMQ caído, los reintentos pasaban los 5 segundos del gateway, el usuario veía un `503` aunque la transferencia ya estaba creada, y si volvía a intentar la creaba dos veces.
 
 Todos se pueden repetir sin efectos duplicados, porque usan el id de la transferencia o del evento ([ADR-016](ADR-016-comunicacion-entre-servicios.md), [ADR-009](ADR-009-consumo-de-rumbo.md)).
 - **Los mensajes de RabbitMQ** que no se pueden procesar se rechazan sin reencolar y van a la cola de errores ([ADR-016](ADR-016-comunicacion-entre-servicios.md)).
+
+### Control de tráfico en el gateway
+El gateway acepta hasta **300 pedidos por minuto de cada IP**. Los que sobran reciben `429` con `Retry-After` (los segundos que faltan para el minuto siguiente) y no llegan a ningún servicio. Así un cliente que manda pedidos de más, por un error o a propósito, no puede saturar a los servicios ni dejar sin lugar a los demás usuarios.
+
+- Contamos por minuto del reloj: al empezar el minuto siguiente, todos los contadores vuelven a cero. Es un mapa en memoria con un mutex, que alcanza porque el gateway corre en una sola instancia.
+- El control va antes de validar el token, así también frena a quien prueba contraseñas en el login.
+- 300 por minuto son 5 por segundo, mucho más de lo que genera una persona usando el frontend.
+- El límite sale de la variable `RATE_LIMIT_PER_MINUTE`. En las pruebas de carga la ponemos en `0`, que lo apaga, porque todos los pedidos salen de la misma IP ([ADR-013](ADR-013-capacidad-y-costos.md)).
+- Los `429` se ven en el tablero de Grafana como cualquier otro código de respuesta ([ADR-011](ADR-011-observabilidad.md)).
 
 ### Circuit breaker con Rumbo
 Rumbo es la única dependencia que no es nuestra, así que es la que más chances tiene de estar caída un buen rato. Para no insistir contra un servicio caído, Transferencias usa un circuit breaker en el adaptador de Rumbo:
@@ -58,14 +69,18 @@ Los errores de negocio (`422`, `409`) no cuentan como fallas: Rumbo está andand
 | **NGINX** | Todo lo que no es Inventario | Lo mismo que si se cayeran las dos instancias de Inventario |
 | **Gateway** | Los procesos de fondo (Rumbo y eventos) | Todo lo que viene de afuera: el frontend y el otro grupo |
 
-Si el MySQL de Inventario no está cuando Inventario arranca, o se cae después, Inventario sigue corriendo: verifica la base cada 5 segundos y, mientras no responde, contesta `503` enseguida en lugar de dejar que cada pedido espere su timeout. Cuando la base vuelve, sigue solo, sin reiniciarse. Lo mismo con el MySQL de logs: arranca igual y los logs salen por consola hasta que vuelve. Antes, sin base, Inventario se cerraba al arrancar y quedaba reiniciándose, y en la nube los pedidos del otro grupo se quedaban colgados sin respuesta.
+Cada servicio necesita su propia base para arrancar: si no está, se cierra y Docker o Render lo vuelven a arrancar. Si la base se cae después, los pedidos que la necesitan fallan por su timeout y, cuando vuelve, el servicio sigue solo. El MySQL de logs es distinto: ningún servicio lo necesita para arrancar, y mientras no está los logs salen por consola ([ADR-011](ADR-011-observabilidad.md)).
+
+En la nube, la base de Inventario Publicado (Aiven) se apagaba si no tenía actividad, e Inventario quedaba reiniciándose. Probamos que Inventario arrancara sin base y respondiera `503` hasta que volviera, pero lo descartamos: un cron-job consulta el catálogo cada 10 minutos y mantiene despiertos a Render y a Aiven, e Inventario sigue funcionando igual que los demás servicios.
 
 Cuando algo responde `503`, el frontend muestra "no disponible por el momento" solo en esa parte de la pantalla, y el resto sigue andando.
 
 ## Alternativas que descartamos
 - **Reintentar automáticamente las llamadas del usuario** (lo decidimos en [ADR-016](ADR-016-comunicacion-entre-servicios.md)). Con un timeout de 2 segundos y tres intentos, el usuario podía esperar 6 segundos para recibir el mismo error, y en el caso de la reserva un reintento podía reservar dos veces.
+- **Limitar por usuario en lugar de por IP.** Con el usuario sacado del token no se puede frenar el login, que es justo donde más sirve, porque todavía no hay token.
 
 ## Consecuencias
+- Varias personas detrás de la misma IP (por ejemplo, una red de la facultad) comparten los 300 pedidos por minuto. Para el uso que esperamos alcanza; si no, se sube con la variable.
 - Con Rumbo caído, las transferencias se acumulan como `RESERVADA` y esas unidades no se pueden usar. Si pasa más de 24 horas, se rechazan y se liberan.
 - Cuando el circuit breaker está abierto, nos enteramos de los cambios de Rumbo con hasta 30 segundos más de atraso.
 - El gateway, NGINX y RabbitMQ son una sola instancia cada uno. Si se caen, se pierde una parte grande del sistema hasta que se vuelven a levantar.
