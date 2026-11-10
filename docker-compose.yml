@@ -5,6 +5,8 @@ name: stock-volcamelli
 services:
   gateway:
     build: ./gateway
+    # Un proceso init le pasa a Go la señal de apagado: sin él, Docker espera 10 segundos antes de cortarlo.
+    init: true
     ports:
       - "8080:8080"
     environment:
@@ -14,14 +16,26 @@ services:
       # Tiene que ser la misma clave que usa Usuarios para firmar los tokens.
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       USUARIOS_URL: http://usuarios:8081
+      SUCURSALES_URL: http://sucursales:8083
+      TRANSFERENCIAS_URL: http://transferencias:8084
       # Inventario se consulta siempre a través de NGINX.
       INVENTARIO_URL: http://nginx
+      TIEMPO_REAL_URL: http://tiempo-real:8085
+      ASISTENTE_URL: http://asistente:8087
     depends_on:
       mysql-logs:
         condition: service_healthy
       usuarios:
         condition: service_started
+      sucursales:
+        condition: service_started
+      transferencias:
+        condition: service_started
       nginx:
+        condition: service_started
+      tiempo-real:
+        condition: service_started
+      asistente:
         condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
@@ -29,20 +43,152 @@ services:
       timeout: 3s
       retries: 5
 
+  # Frontend: React compilado con Vite y servido por NGINX, que le pasa /api al gateway.
+  frontend:
+    build: ./frontend
+    ports:
+      - "8000:80"
+    depends_on:
+      gateway:
+        condition: service_started
+
   usuarios:
     build: ./servicios/usuarios
+    init: true
     environment:
       PORT: "8081"
       DB_DSN: ${USUARIOS_DB_USER:?falta USUARIOS_DB_USER en .env}:${USUARIOS_DB_PASSWORD:?falta USUARIOS_DB_PASSWORD en .env}@tcp(mysql-usuarios:3306)/${USUARIOS_DB_NAME:?falta USUARIOS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
       MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      MEMCACHED_ADDR: memcached:11211
+      # Con false, las consultas van directo a MySQL. Sirve para medir con y sin caché.
+      CACHE_ENABLED: "true"
     depends_on:
       mysql-usuarios:
         condition: service_healthy
       mysql-logs:
         condition: service_healthy
+      memcached:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  sucursales:
+    build: ./servicios/sucursales
+    init: true
+    environment:
+      PORT: "8083"
+      DB_DSN: ${SUCURSALES_DB_USER:?falta SUCURSALES_DB_USER en .env}:${SUCURSALES_DB_PASSWORD:?falta SUCURSALES_DB_PASSWORD en .env}@tcp(mysql-sucursales:3306)/${SUCURSALES_DB_NAME:?falta SUCURSALES_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      MEMCACHED_ADDR: memcached:11211
+      # Con false, las consultas van directo a MySQL. Sirve para medir con y sin caché.
+      CACHE_ENABLED: "true"
+    depends_on:
+      mysql-sucursales:
+        condition: service_healthy
+      mysql-logs:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Una sola instancia: sus procesos de fondo (mandar pedidos a Rumbo y consultar sus cambios) no se pueden duplicar.
+  transferencias:
+    build: ./servicios/transferencias
+    init: true
+    environment:
+      PORT: "8084"
+      MONGO_URI: mongodb://${MONGO_USER:?falta MONGO_USER en .env}:${MONGO_PASSWORD:?falta MONGO_PASSWORD en .env}@mongo-transferencias:27017
+      MONGO_DB: transferencias
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      # Inventario a través de NGINX, como el gateway.
+      INVENTARIO_URL: http://nginx
+      SUCURSALES_URL: http://sucursales:8083
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?falta RABBITMQ_USER en .env}:${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}@rabbitmq:5672/
+      # Sin RUMBO_URL en el .env, las transferencias se crean pero no se reservan en Rumbo (pruebas de carga).
+      RUMBO_URL: ${RUMBO_URL:-}
+      RUMBO_CLIENT_ID: ${RUMBO_CLIENT_ID:-}
+      RUMBO_CLIENT_SECRET: ${RUMBO_CLIENT_SECRET:-}
+    depends_on:
+      mongo-transferencias:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+      mysql-logs:
+        condition: service_healthy
+      nginx:
+        condition: service_started
+      sucursales:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Una sola instancia: los navegadores conectados viven en su memoria (ADR-019).
+  tiempo-real:
+    build: ./servicios/tiempo-real
+    init: true
+    environment:
+      PORT: "8085"
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?falta RABBITMQ_USER en .env}:${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}@rabbitmq:5672/
+    depends_on:
+      mysql-logs:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Servidor MCP: expone las herramientas del asistente. Cada una llama a la API por el gateway, con el
+  # token del usuario que está chateando (ADR-018).
+  mcp:
+    build: ./servicios/mcp
+    init: true
+    environment:
+      PORT: "8086"
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      GATEWAY_URL: http://gateway:8080
+    depends_on:
+      mysql-logs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Asistente: le manda la pregunta al modelo y ejecuta las herramientas por MCP. Sin MODEL_API_KEY en el .env
+  # arranca igual y el chat responde que el asistente no está disponible (ADR-018).
+  asistente:
+    build: ./servicios/asistente
+    init: true
+    environment:
+      PORT: "8087"
+      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
+      MCP_URL: http://mcp:8086/mcp
+      MODEL_URL: ${MODEL_URL:-https://api.groq.com/openai/v1}
+      MODEL_NAME: ${MODEL_NAME:-openai/gpt-oss-120b}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+    depends_on:
+      mysql-logs:
+        condition: service_healthy
+      mcp:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8087/health"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -50,14 +196,26 @@ services:
   # Las dos instancias de Inventario usan el mismo Dockerfile, el mismo código y la misma base.
   inventario1:
     build: ./servicios/inventario
+    init: true
     environment:
       PORT: "8082"
+      # Para validar la sucursal en un ajuste manual.
+      SUCURSALES_URL: http://sucursales:8083
+      # Para escuchar los eventos de Transferencias y publicar los de Inventario.
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?falta RABBITMQ_USER en .env}:${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}@rabbitmq:5672/
+      SOLR_URL: http://solr:8983/solr/productos
+      # Solo esta instancia mantiene actualizada la búsqueda, así dos cambios del mismo producto no se pisan.
+      INDEXADOR: "true"
       DB_DSN: ${INVENTARIO_DB_USER:?falta INVENTARIO_DB_USER en .env}:${INVENTARIO_DB_PASSWORD:?falta INVENTARIO_DB_PASSWORD en .env}@tcp(mysql-inventario:3306)/${INVENTARIO_DB_NAME:?falta INVENTARIO_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
       MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
     depends_on:
       mysql-inventario:
         condition: service_healthy
       mysql-logs:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+      solr:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8082/health"]
@@ -67,14 +225,22 @@ services:
 
   inventario2:
     build: ./servicios/inventario
+    init: true
     environment:
       PORT: "8082"
+      SUCURSALES_URL: http://sucursales:8083
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?falta RABBITMQ_USER en .env}:${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}@rabbitmq:5672/
+      SOLR_URL: http://solr:8983/solr/productos
       DB_DSN: ${INVENTARIO_DB_USER:?falta INVENTARIO_DB_USER en .env}:${INVENTARIO_DB_PASSWORD:?falta INVENTARIO_DB_PASSWORD en .env}@tcp(mysql-inventario:3306)/${INVENTARIO_DB_NAME:?falta INVENTARIO_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
       MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
     depends_on:
       mysql-inventario:
         condition: service_healthy
       mysql-logs:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+      solr:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8082/health"]
@@ -105,6 +271,25 @@ services:
     volumes:
       - mysql_usuarios_data:/var/lib/mysql
       - ./servicios/usuarios/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u $${MYSQL_USER} -p$${MYSQL_PASSWORD} $${MYSQL_DATABASE} -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+
+  mysql-sucursales:
+    image: mysql:8.4
+    ports:
+      - "127.0.0.1:3311:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?falta MYSQL_ROOT_PASSWORD en .env}
+      MYSQL_DATABASE: ${SUCURSALES_DB_NAME}
+      MYSQL_USER: ${SUCURSALES_DB_USER}
+      MYSQL_PASSWORD: ${SUCURSALES_DB_PASSWORD}
+    volumes:
+      - mysql_sucursales_data:/var/lib/mysql
+      - ./servicios/sucursales/mysql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u $${MYSQL_USER} -p$${MYSQL_PASSWORD} $${MYSQL_DATABASE} -e 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
@@ -151,6 +336,55 @@ services:
       retries: 20
       start_period: 60s
 
+  # Base de Transferencias: un documento por transferencia, con su historial.
+  mongo-transferencias:
+    image: mongo:7
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    volumes:
+      - mongo_transferencias_data:/data/db
+    # mongosh tarda en arrancar: con la máquina cargada pasaba los 3 segundos y Docker marcaba a Mongo
+    # como caído aunque respondía, y Transferencias no arrancaba.
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # Mensajería de los eventos. En http://localhost:15672 se ven las colas, incluida la de errores.
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "127.0.0.1:15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+
+  # Búsqueda del catálogo. Arranca con el índice productos creado; los campos y los productos los carga Inventario.
+  solr:
+    image: solr:9
+    command:
+      - solr-precreate
+      - productos
+    ports:
+      - "127.0.0.1:8983:8983"
+    volumes:
+      - solr_data:/var/solr
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8983/solr/productos/admin/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+
+  # Caché de Sucursales y Usuarios. No guarda nada en disco: si se reinicia, arranca vacía.
+  memcached:
+    image: memcached:1.6-alpine
+
   prometheus:
     image: prom/prometheus:v3.7.3
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
@@ -162,6 +396,8 @@ services:
     depends_on:
       - gateway
       - usuarios
+      - sucursales
+      - transferencias
       - inventario1
       - inventario2
 
@@ -171,7 +407,7 @@ services:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?falta GRAFANA_ADMIN_PASSWORD en .env}
+      GF_SECURITY_ADMIN_PASSWORD: admin
       # Clave del usuario de solo lectura grafana_reader.
       GRAFANA_MYSQL_PASSWORD: grafana_demo
       # Nombre de la base de logs, para el datasource de Grafana.
@@ -188,6 +424,9 @@ services:
 
 volumes:
   mysql_usuarios_data:
+  mysql_sucursales_data:
+  mongo_transferencias_data:
+  solr_data:
   mysql_inventario_data:
   mysql_logs_data:
   prometheus_data:
