@@ -25,15 +25,30 @@ func Connect() (*Store, error) {
 	if dsn == "" {
 		dsn = "demo:demo@tcp(localhost:3306)/observabilidad?parseTime=true"
 	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	// Sin probar la conexión: si el MySQL de logs no está, Inventario arranca igual y los logs salen por
+	// consola hasta que vuelve. Antes se cerraba y quedaba reiniciándose.
+	db, err := gorm.Open(mysql.New(mysql.Config{DSN: dsn, SkipInitializeWithVersion: true}), &gorm.Config{DisableAutomaticPing: true})
 	if err != nil {
 		return nil, err
 	}
-	if err := db.Table("app_logs").AutoMigrate(&Log{}); err != nil {
-		return nil, err
-	}
+	go createTable(db)
 	return &Store{db: db}, nil
 }
+
+// createTable crea la tabla de logs si no existe, reintentando hasta que el MySQL de logs responda.
+func createTable(db *gorm.DB) {
+	for {
+		err := db.Table("app_logs").AutoMigrate(&Log{})
+		if err == nil {
+			return
+		}
+		log.Printf("todavía no se pudo preparar la tabla de logs, se reintenta en %v: %v", retryWait, err)
+		time.Sleep(retryWait)
+	}
+}
+
+// retryWait es cuánto esperamos para volver a intentar crear la tabla de logs.
+const retryWait = 10 * time.Second
 
 // writeTimeout es lo máximo que un pedido espera a que se guarde un log. El gateway les da 2 segundos a los
 // servicios, y un MySQL de logs caído o saturado no tiene que hacer fallar un pedido.
