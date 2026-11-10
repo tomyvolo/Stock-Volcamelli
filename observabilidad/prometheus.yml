@@ -14,6 +14,31 @@ scrape_configs:
       - targets: ["usuarios:8081"]
     metrics_path: /metrics
 
+  - job_name: sucursales
+    static_configs:
+      - targets: ["sucursales:8083"]
+    metrics_path: /metrics
+
+  - job_name: transferencias
+    static_configs:
+      - targets: ["transferencias:8084"]
+    metrics_path: /metrics
+
+  - job_name: tiempo-real
+    static_configs:
+      - targets: ["tiempo-real:8085"]
+    metrics_path: /metrics
+
+  - job_name: mcp
+    static_configs:
+      - targets: ["mcp:8086"]
+    metrics_path: /metrics
+
+  - job_name: asistente
+    static_configs:
+      - targets: ["asistente:8087"]
+    metrics_path: /metrics
+
   # Las dos instancias van en el mismo job; Prometheus las distingue con la etiqueta "instance".
   - job_name: inventario
     static_configs:

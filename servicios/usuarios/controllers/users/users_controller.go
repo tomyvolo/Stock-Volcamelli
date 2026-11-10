@@ -30,6 +30,11 @@ type createUserRequest struct {
 	BranchID *uint  `json:"branchId"`
 }
 
+type updateUserRequest struct {
+	Role     string `json:"role" binding:"required"`
+	BranchID *uint  `json:"branchId"`
+}
+
 type UsersController struct {
 	Service services.UsersService
 	Logs    *logs.Store
@@ -64,6 +69,104 @@ func (c *UsersController) Login(ctx *gin.Context) {
 		"token":     token,
 		"expiresIn": utils.TokenHours() * 3600,
 	})
+}
+
+// List responde GET /api/users y GET /api/users?branchId=3. Cualquier usuario puede ver a los demás, sin contraseñas.
+func (c *UsersController) List(ctx *gin.Context) {
+	start := time.Now()
+	trackID := ctx.GetString("track_id")
+
+	var branchID *uint
+	if query := ctx.Query("branchId"); query != "" {
+		branch, err := strconv.ParseUint(query, 10, 32)
+		if err != nil || branch == 0 {
+			ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, "El parámetro branchId tiene que ser un número mayor a 0."))
+			return
+		}
+		value := uint(branch)
+		branchID = &value
+	}
+
+	list, err := c.Service.ListUsers(branchID)
+	if err != nil {
+		c.Logs.Write(trackID, stage, "error", "listar usuarios: "+err.Error())
+		ctx.JSON(http.StatusInternalServerError, utils.ErrorResponse(utils.CodeInternal, "no se pudieron obtener los usuarios"))
+		return
+	}
+
+	c.Logs.Write(trackID, stage, "info", fmt.Sprintf("listar usuarios: %d usuarios (%d ms)", len(list), time.Since(start).Milliseconds()))
+	ctx.JSON(http.StatusOK, gin.H{"items": list})
+}
+
+// Update responde PUT /api/users/:userId. El gateway solo la deja pasar con el token de un director.
+// Para el director, branchId va vacío; para el admin y el vendedor, es obligatorio.
+func (c *UsersController) Update(ctx *gin.Context) {
+	start := time.Now()
+	trackID := ctx.GetString("track_id")
+
+	id, err := strconv.ParseUint(ctx.Param("userId"), 10, 32)
+	if err != nil || id == 0 {
+		ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, "El userId tiene que ser un número mayor a 0."))
+		return
+	}
+	var req updateUserRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, "Es obligatorio role, y branchId para el admin de sucursal y el vendedor."))
+		return
+	}
+
+	user, err := c.Service.UpdateUser(uint(id), req.Role, req.BranchID)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrUserNotFound):
+			ctx.JSON(http.StatusNotFound, utils.ErrorResponse(utils.CodeUserNotFound, fmt.Sprintf("No existe el usuario %d.", id)))
+		case errors.Is(err, services.ErrInvalidRole), errors.Is(err, services.ErrBranchRequired), errors.Is(err, services.ErrBranchNotAllowed):
+			ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, err.Error()+"."))
+		default:
+			c.Logs.Write(trackID, stage, "error", "modificar usuario: "+err.Error())
+			ctx.JSON(http.StatusInternalServerError, utils.ErrorResponse(utils.CodeInternal, "no se pudo modificar el usuario"))
+		}
+		return
+	}
+
+	c.Logs.Write(trackID, stage, "info", fmt.Sprintf("usuario %d pasa a %s (%d ms)", user.ID, user.Role, time.Since(start).Milliseconds()))
+	ctx.JSON(http.StatusOK, gin.H{
+		"id":       user.ID,
+		"name":     user.Name,
+		"email":    user.Email,
+		"role":     user.Role,
+		"branchId": user.BranchID,
+	})
+}
+
+// Delete responde DELETE /api/users/:userId. El gateway solo la deja pasar con el token de un director,
+// y quién lo pide llega en el header X-User-ID.
+func (c *UsersController) Delete(ctx *gin.Context) {
+	start := time.Now()
+	trackID := ctx.GetString("track_id")
+
+	id, err := strconv.ParseUint(ctx.Param("userId"), 10, 32)
+	if err != nil || id == 0 {
+		ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, "El userId tiene que ser un número mayor a 0."))
+		return
+	}
+	requesterID, _ := strconv.ParseUint(ctx.GetHeader("X-User-ID"), 10, 32)
+
+	if err := c.Service.DeleteUser(uint(requesterID), uint(id)); err != nil {
+		switch {
+		case errors.Is(err, services.ErrUserNotFound):
+			ctx.JSON(http.StatusNotFound, utils.ErrorResponse(utils.CodeUserNotFound, fmt.Sprintf("No existe el usuario %d.", id)))
+		case errors.Is(err, services.ErrDeleteSelf):
+			ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, "No podés borrar tu propio usuario."))
+		default:
+			c.Logs.Write(trackID, stage, "error", "borrar usuario: "+err.Error())
+			ctx.JSON(http.StatusInternalServerError, utils.ErrorResponse(utils.CodeInternal, "no se pudo borrar el usuario"))
+		}
+		return
+	}
+
+	c.Logs.Write(trackID, stage, "info", fmt.Sprintf("usuario %d borrado (%d ms)", id, time.Since(start).Milliseconds()))
+	ctx.Status(http.StatusNoContent)
 }
 
 // Create responde POST /api/create-users. Quién lo pide (rol y sucursal) llega del gateway en los headers X-User-*.

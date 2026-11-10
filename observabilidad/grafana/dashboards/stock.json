@@ -137,6 +137,51 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 9,
+      "title": "Porcentaje de aciertos de la caché",
+      "description": "De las consultas a Memcached en el período, cuántas se respondieron desde la caché sin ir a MySQL. Sale de cache_hits_total y cache_misses_total.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        { "expr": "100 * sum by (job) (increase(cache_hits_total{job=~\"sucursales|usuarios\"}[$__range])) / (sum by (job) (increase(cache_hits_total{job=~\"sucursales|usuarios\"}[$__range])) + sum by (job) (increase(cache_misses_total{job=~\"sucursales|usuarios\"}[$__range])))", "legendFormat": "{{job}}", "refId": "A", "instant": true, "range": false }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "max": 100,
+          "mappings": [ { "type": "special", "options": { "match": "nan", "result": { "text": "Sin consultas" } } } ],
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Consultas a la caché por segundo",
+      "description": "Aciertos (se respondió desde Memcached), fallos (fue a MySQL) y errores (Memcached no respondió) de cada servicio. Si Memcached se cae, suben los errores y las consultas siguen andando.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        { "expr": "sum by (job) (rate(cache_hits_total{job=~\"sucursales|usuarios\"}[1m]))", "legendFormat": "{{job}} aciertos", "refId": "A" },
+        { "expr": "sum by (job) (rate(cache_misses_total{job=~\"sucursales|usuarios\"}[1m]))", "legendFormat": "{{job}} fallos", "refId": "B" },
+        { "expr": "sum by (job) (rate(cache_errors_total{job=~\"sucursales|usuarios\"}[1m]))", "legendFormat": "{{job}} errores", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" },
+        "overrides": []
+      }
     }
   ]
 }
