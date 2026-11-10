@@ -152,3 +152,119 @@ func TestCreateUser_SellerNeedsBranch(t *testing.T) {
 		t.Errorf("Se esperaba ErrBranchRequired, pero se obtuvo: %v", err)
 	}
 }
+
+func TestListUsers_All(t *testing.T) {
+	service := newService(t)
+	branch := uint(2)
+	service.CreateUser("DIRECTOR", nil,
+		users.UserModel{Name: "Vendedor 2", Email: "vendedor2@volcamelli.com", Role: "VENDEDOR", BranchID: &branch}, "clave-nueva")
+
+	list, err := service.ListUsers(nil)
+
+	if err != nil {
+		t.Fatalf("No se esperaba un error, pero falló: %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("Se esperaban los 2 usuarios de todas las sucursales, pero se obtuvo: %+v", list)
+	}
+}
+
+func TestListUsers_ByBranch(t *testing.T) {
+	service := newService(t)
+	branch := uint(2)
+	service.CreateUser("DIRECTOR", nil,
+		users.UserModel{Name: "Vendedor 2", Email: "vendedor2@volcamelli.com", Role: "VENDEDOR", BranchID: &branch}, "clave-nueva")
+
+	list, err := service.ListUsers(&branch)
+
+	if err != nil {
+		t.Fatalf("No se esperaba un error, pero falló: %v", err)
+	}
+	if len(list) != 1 || list[0].Email != "vendedor2@volcamelli.com" {
+		t.Errorf("Se esperaba solo el vendedor de la sucursal 2, pero se obtuvo: %+v", list)
+	}
+}
+
+// CA-24: el vendedor de la sucursal 1 pasa a la 5 y el cambio llega con el próximo login.
+func TestUpdateUser_ChangeBranch(t *testing.T) {
+	service := newService(t)
+	newBranch := uint(5)
+
+	user, err := service.UpdateUser(3, "VENDEDOR", &newBranch)
+
+	if err != nil {
+		t.Fatalf("No se esperaba un error, pero falló: %v", err)
+	}
+	if user.BranchID == nil || *user.BranchID != 5 {
+		t.Errorf("Se esperaba la sucursal 5, pero se obtuvo: %+v", user)
+	}
+
+	token, _, err := service.Login("vendedor@volcamelli.com", "clave-correcta")
+	if err != nil {
+		t.Fatalf("No se pudo hacer login después del cambio: %v", err)
+	}
+	claims := &utils.Claims{}
+	_, err = jwt.ParseWithClaims(token, claims, func(*jwt.Token) (interface{}, error) {
+		return []byte(testSecret), nil
+	})
+	if err != nil || claims.BranchID == nil || *claims.BranchID != 5 {
+		t.Errorf("El token nuevo no lleva la sucursal 5: %+v", claims)
+	}
+}
+
+func TestUpdateUser_NotFound(t *testing.T) {
+	service := newService(t)
+	branch := uint(1)
+
+	_, err := service.UpdateUser(99, "VENDEDOR", &branch)
+
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("Se esperaba ErrUserNotFound, pero se obtuvo: %v", err)
+	}
+}
+
+func TestUpdateUser_DirectorWithBranch(t *testing.T) {
+	service := newService(t)
+	branch := uint(1)
+
+	_, err := service.UpdateUser(3, "DIRECTOR", &branch)
+
+	if !errors.Is(err, ErrBranchNotAllowed) {
+		t.Errorf("Se esperaba ErrBranchNotAllowed, pero se obtuvo: %v", err)
+	}
+}
+
+// El director (id 1) borra al vendedor: después ya no puede hacer login.
+func TestDeleteUser_Success(t *testing.T) {
+	service := newService(t)
+
+	err := service.DeleteUser(1, 3)
+
+	if err != nil {
+		t.Fatalf("No se esperaba un error, pero falló: %v", err)
+	}
+	if _, _, err := service.Login("vendedor@volcamelli.com", "clave-correcta"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("El usuario borrado no tenía que poder hacer login: %v", err)
+	}
+}
+
+func TestDeleteUser_NotFound(t *testing.T) {
+	service := newService(t)
+
+	err := service.DeleteUser(1, 99)
+
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("Se esperaba ErrUserNotFound, pero se obtuvo: %v", err)
+	}
+}
+
+// Nadie se puede borrar a sí mismo: así siempre queda un director.
+func TestDeleteUser_Self(t *testing.T) {
+	service := newService(t)
+
+	err := service.DeleteUser(3, 3)
+
+	if !errors.Is(err, ErrDeleteSelf) {
+		t.Errorf("Se esperaba ErrDeleteSelf, pero se obtuvo: %v", err)
+	}
+}
