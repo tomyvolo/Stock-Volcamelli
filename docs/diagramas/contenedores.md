@@ -27,7 +27,7 @@ flowchart TB
     LLM["Modelo de lenguaje<br/>proveedor externo"]
 
     U --> F --> G
-    C -->|"Consultas con X-API-Key"| I
+    C -->|"Consultas y cambios de stock<br/>con X-API-Key"| I
     G --> US
     G --> BS
     G --> TS
@@ -49,7 +49,7 @@ flowchart TB
     I -->|"Búsqueda del catálogo"| S
     US -->|"Caché de usuarios por sucursal"| M
     BS -->|"Caché de sucursales"| M
-    TS -->|"Pedir, seguir, responder horario y cancelar"| R
+    TS -->|"Reservar, seguir y cancelar"| R
     A -->|"Pregunta y herramientas"| LLM
     A -->|"Ejecutar herramientas"| MCP
     MCP -->|"Con el token del usuario"| G
@@ -71,7 +71,7 @@ flowchart TB
 | Tiempo Real | Le manda al frontend los cambios de stock y de transferencias apenas pasan |
 | RabbitMQ | Lleva los eventos entre servicios |
 | Solr | Índice para buscar en el catálogo |
-| Memcached | Caché de los datos de cada sucursal y de sus usuarios |
+| Memcached | Caché de los datos de las sucursales y de la lista de usuarios |
 
 Cada servicio usa solo su propia base. Solr y Memcached no son fuente de verdad: si se pierden, Solr se reconstruye desde el MySQL de Inventario y Memcached se vuelve a llenar desde los MySQL de Usuarios y Sucursales.
 

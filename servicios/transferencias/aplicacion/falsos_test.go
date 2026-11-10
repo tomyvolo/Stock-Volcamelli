@@ -90,20 +90,42 @@ func (sucursalesFalsas) Obtener(sucursalID uint, trackID string) (dominio.Ubicac
 
 // transporteFalso responde lo que le cargue cada test.
 type transporteFalso struct {
-	respSolicitar  dominio.Novedad
-	errSolicitar   error
+	// franjas con lugar de cada día ("2026-11-02").
+	franjas         map[string][]dominio.Franja
+	diasConsultados int
+	// errReservar son los errores que devuelven las próximas reservas, en orden; errSiempre, todas.
+	errReservar    []error
+	errSiempre     error
+	motivoRechazo  string
+	reservadas     []dominio.Franja
+	respReservar   dominio.Novedad
 	cambios        []dominio.Novedad
-	respResponder  dominio.Novedad
-	respondido     *bool
+	respConsultar  dominio.Novedad
 	respCancelar   dominio.Novedad
 	errCancelar    error
 	motivoCancelar string
+	canceladoEn    string // id de Rumbo del traslado que se mandó a cancelar
 }
 
-func (f *transporteFalso) Solicitar(t *dominio.Transferencia) (dominio.Novedad, error) {
-	n := f.respSolicitar
+func (f *transporteFalso) Franjas(fecha time.Time) ([]dominio.Franja, error) {
+	f.diasConsultados++
+	return f.franjas[fecha.Format("2006-01-02")], nil
+}
+
+func (f *transporteFalso) Reservar(t *dominio.Transferencia) (dominio.Novedad, error) {
+	f.reservadas = append(f.reservadas, *t.Franja)
+	if f.errSiempre != nil {
+		return dominio.Novedad{}, f.errSiempre
+	}
+	if len(f.errReservar) > 0 {
+		err := f.errReservar[0]
+		f.errReservar = f.errReservar[1:]
+		return dominio.Novedad{Motivo: f.motivoRechazo}, err
+	}
+	n := f.respReservar
 	n.TransferenciaID = t.ID
-	return n, f.errSolicitar
+	n.Franja = t.Franja
+	return n, nil
 }
 
 func (f *transporteFalso) Cambios(desde time.Time) ([]dominio.Novedad, time.Time, error) {
@@ -111,16 +133,12 @@ func (f *transporteFalso) Cambios(desde time.Time) ([]dominio.Novedad, time.Time
 }
 
 func (f *transporteFalso) Consultar(t *dominio.Transferencia) (dominio.Novedad, error) {
-	return dominio.Novedad{}, puertos.ErrNoDisponible
-}
-
-func (f *transporteFalso) ResponderPropuesta(t *dominio.Transferencia, acepta bool) (dominio.Novedad, error) {
-	f.respondido = &acepta
-	return f.respResponder, nil
+	return f.respConsultar, nil
 }
 
 func (f *transporteFalso) Cancelar(t *dominio.Transferencia, motivo string) (dominio.Novedad, error) {
 	f.motivoCancelar = motivo
+	f.canceladoEn = t.IDRumbo
 	return f.respCancelar, f.errCancelar
 }
 

@@ -1,27 +1,21 @@
 package dominio
 
 import (
-	"fmt"
 	"time"
 )
 
+// argentina es la hora en la que opera Rumbo; la usamos para mostrar la franja en el historial.
+var argentina = time.FixedZone("ART", -3*60*60)
+
 // Novedad es lo que informa el transporte sobre un traslado, ya traducido a nuestros estados.
-// Cuando el transporte propone un horario, Contrapropuesta es true: qué hacer depende de si
-// el usuario había pedido una hora, y eso lo decide la transferencia, no el adaptador.
 type Novedad struct {
-	TransferenciaID  string
-	IDRumbo          string
-	Estado           Estado
-	Contrapropuesta  bool
-	HoraPropuesta    *time.Time
-	VencePropuesta   *time.Time
-	HoraComprometida *time.Time
-	DemoraMinutos    int
-	Motivo           string
-	// La cancelación que pidió el usuario quedó esperando a que Rumbo la apruebe, o Rumbo no la aprobó.
-	CancelacionPendiente bool
-	CancelacionRechazada bool
-	ActualizadoEn        time.Time
+	TransferenciaID string
+	IDRumbo         string
+	Estado          Estado
+	Franja          *Franja
+	DemoraMinutos   int
+	Motivo          string
+	ActualizadoEn   time.Time
 }
 
 // Aplicar actualiza la transferencia con lo que informó el transporte y devuelve si cambió de estado.
@@ -42,47 +36,30 @@ func (t *Transferencia) Aplicar(n Novedad, ahora time.Time) bool {
 	if n.IDRumbo != "" {
 		t.IDRumbo = n.IDRumbo
 	}
-	if n.HoraPropuesta != nil {
-		t.HoraPropuesta, t.VencePropuesta = n.HoraPropuesta, n.VencePropuesta
-	}
-	if n.HoraComprometida != nil {
-		t.HoraComprometida = n.HoraComprometida
+	if n.Franja != nil {
+		t.Franja = n.Franja
 	}
 	t.DemoraMinutos = n.DemoraMinutos
 	if n.Motivo != "" {
 		t.Motivo = n.Motivo
 	}
 
-	nuevo := n.Estado
-	detalle := ""
-	switch {
-	case n.Contrapropuesta && t.HoraLlegadaPedida == nil:
-		// El usuario no pidió hora: le daba igual cuándo llegara, así que aceptamos solos.
-		if t.RespuestaPorEnviar == nil {
-			acepta := true
-			t.RespuestaPorEnviar = &acepta
-		}
-		nuevo = Reservada
-	case n.Contrapropuesta:
-		// Pidió una hora y Rumbo propone otra: le preguntamos.
-		nuevo = EsperandoConfirmacion
-		if n.HoraPropuesta != nil {
-			detalle = fmt.Sprintf("Rumbo propone que llegue el %s", n.HoraPropuesta.Format("02/01 a las 15:04"))
-		}
-	case n.CancelacionPendiente:
-		nuevo = CancelacionPendiente
-	}
-	if n.CancelacionRechazada && t.Estado == CancelacionPendiente {
-		t.CancelacionRechazada = true
-		detalle = "Rumbo no aprobó la cancelación"
-	}
-	if nuevo.EsFinal() && n.Motivo != "" {
-		detalle = n.Motivo
-	}
-
-	if nuevo == t.Estado {
+	if n.Estado == t.Estado {
 		return false
 	}
-	t.CambiarEstado(nuevo, detalle, ahora)
+	detalle := ""
+	switch {
+	case n.Estado == Programada && t.Franja != nil:
+		detalle = "llega el " + t.Franja.Texto()
+	case n.Estado.EsFinal() && n.Motivo != "":
+		detalle = n.Motivo
+	}
+	t.CambiarEstado(n.Estado, detalle, ahora)
 	return true
+}
+
+// Texto muestra la franja en hora de Argentina, por ejemplo "20/11 entre las 10:00 y las 12:00".
+func (f Franja) Texto() string {
+	return f.Inicio.In(argentina).Format("02/01") + " entre las " + f.Inicio.In(argentina).Format("15:04") +
+		" y las " + f.Fin.In(argentina).Format("15:04")
 }

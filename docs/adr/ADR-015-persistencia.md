@@ -36,7 +36,7 @@ Cada transferencia es un documento con lo que se pidió (incluida la hora de lle
 
 Las consultas son tres: por id, por estado (los procesos de fondo buscan las que todavía no se mandaron a Rumbo o esperan respuesta) y por sucursal y fecha (las pantallas de los usuarios). Para eso ponemos índices en `estado` y en `sucursal_origen` + `fecha`.
 
-Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en dos tablas (transferencia e historial de estados) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una contrapropuesta trae un horario y su vencimiento, un traslado en curso puede traer una demora. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
+Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en dos tablas (transferencia e historial de estados) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una reserva trae su franja, un traslado en curso puede traer una demora. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
 
 ## Validación
 Validamos el uso de MySQL con el sistema levantado con Docker Compose:

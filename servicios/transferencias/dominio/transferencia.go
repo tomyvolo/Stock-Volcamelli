@@ -10,18 +10,19 @@ import (
 type Estado string
 
 const (
-	SinStock              Estado = "SIN_STOCK"
-	Fallida               Estado = "FALLIDA"
-	Reservada             Estado = "RESERVADA"
-	EsperandoConfirmacion Estado = "ESPERANDO_CONFIRMACION"
-	Programada            Estado = "PROGRAMADA"
-	EnCurso               Estado = "EN_CURSO"
-	Completada            Estado = "COMPLETADA"
-	Rechazada             Estado = "RECHAZADA"
-	CancelacionPendiente  Estado = "CANCELACION_PENDIENTE"
-	Cancelada             Estado = "CANCELADA"
-	NoRealizada           Estado = "NO_REALIZADA"
+	SinStock    Estado = "SIN_STOCK"
+	Fallida     Estado = "FALLIDA"
+	Reservada   Estado = "RESERVADA"
+	Programada  Estado = "PROGRAMADA"
+	EnCurso     Estado = "EN_CURSO"
+	Completada  Estado = "COMPLETADA"
+	Rechazada   Estado = "RECHAZADA"
+	Cancelada   Estado = "CANCELADA"
+	NoRealizada Estado = "NO_REALIZADA"
 )
+
+// DiasReservables es hasta cuántos días adelante se puede reservar un traslado en Rumbo.
+const DiasReservables = 30
 
 // EsFinal dice si la transferencia ya no cambia más.
 func (e Estado) EsFinal() bool {
@@ -41,16 +42,20 @@ var (
 	ErrCantidadInvalida = errors.New("la cantidad tiene que ser mayor a 0")
 	ErrMismaSucursal    = errors.New("el origen y el destino tienen que ser sucursales distintas")
 	ErrHoraPasada       = errors.New("la hora de llegada tiene que ser futura")
-	ErrToleranciaMala   = errors.New("la tolerancia tiene que estar entre 0 y 720 minutos")
+	ErrHoraLejana       = errors.New("la hora de llegada tiene que estar dentro de los próximos 30 días")
 	ErrNoCancelable     = errors.New("la transferencia ya no se puede cancelar")
-	ErrNoHayPropuesta   = errors.New("la transferencia no tiene un horario propuesto para responder")
-	ErrPropuestaVencida = errors.New("el plazo para responder el horario propuesto ya venció")
 )
 
 // Ubicacion es lo que Rumbo necesita de cada sucursal.
 type Ubicacion struct {
 	Nombre    string
 	Direccion string
+}
+
+// Franja es la ventana de 2 horas en la que el traslado llega al destino.
+type Franja struct {
+	Inicio time.Time
+	Fin    time.Time
 }
 
 // CambioDeEstado es una entrada del historial.
@@ -77,32 +82,30 @@ type Transferencia struct {
 
 	// Opcionales que elige el usuario.
 	HoraLlegadaPedida *time.Time
-	ToleranciaMinutos int
 	Observaciones     string
 
 	Estado    Estado
 	Historial []CambioDeEstado
 
 	// Lo que informa Rumbo.
-	IDRumbo          string
-	HoraPropuesta    *time.Time
-	VencePropuesta   *time.Time
-	HoraComprometida *time.Time
-	DemoraMinutos    int
-	Motivo           string
+	IDRumbo string
+	// Franja es la que elegimos para reservar y, cuando Rumbo la reserva, en la que se compromete a llegar.
+	// La guardamos antes de mandar el pedido: si no sabemos si llegó, el reintento va con la misma.
+	Franja        *Franja
+	DemoraMinutos int
+	Motivo        string
 	// ActualizadoEnRumbo es la fecha del último dato de Rumbo que aplicamos. Un dato más viejo se ignora.
 	ActualizadoEnRumbo *time.Time
 
 	// Lo que todavía hay que mandar, en segundo plano.
-	RespuestaPorEnviar   *bool   // respuesta al horario propuesto
 	CancelacionPorEnviar *string // motivo de la cancelación
 	LiberacionPorEnviar  bool    // pedirle a Inventario que libere la reserva (después de un timeout)
-	CancelacionRechazada bool    // Rumbo no aprobó la última cancelación pendiente
 }
 
-// Nueva arma una transferencia y controla sus reglas: cantidad mayor a 0, sucursales distintas y hora futura.
+// Nueva arma una transferencia y controla sus reglas: cantidad mayor a 0, sucursales distintas y una hora
+// de llegada futura que Rumbo pueda reservar.
 func Nueva(id string, productoID uint, cantidad int, origenID, destinoID, creadaPor uint,
-	horaPedida *time.Time, tolerancia int, observaciones string, ahora time.Time) (*Transferencia, error) {
+	horaPedida *time.Time, observaciones string, ahora time.Time) (*Transferencia, error) {
 	if cantidad <= 0 {
 		return nil, ErrCantidadInvalida
 	}
@@ -112,13 +115,12 @@ func Nueva(id string, productoID uint, cantidad int, origenID, destinoID, creada
 	if horaPedida != nil && !horaPedida.After(ahora) {
 		return nil, ErrHoraPasada
 	}
-	if tolerancia < 0 || tolerancia > 720 {
-		return nil, ErrToleranciaMala
+	if horaPedida != nil && horaPedida.After(ahora.AddDate(0, 0, DiasReservables)) {
+		return nil, ErrHoraLejana
 	}
 	return &Transferencia{
 		ID: id, ProductoID: productoID, Cantidad: cantidad, OrigenID: origenID, DestinoID: destinoID,
-		CreadaPor: creadaPor, CreadaEn: ahora, HoraLlegadaPedida: horaPedida, ToleranciaMinutos: tolerancia,
-		Observaciones: observaciones,
+		CreadaPor: creadaPor, CreadaEn: ahora, HoraLlegadaPedida: horaPedida, Observaciones: observaciones,
 	}, nil
 }
 
@@ -133,7 +135,7 @@ func (t *Transferencia) PasaPorSucursal(sucursalID uint) bool {
 	return t.OrigenID == sucursalID || t.DestinoID == sucursalID
 }
 
-// EnviadaARumbo dice si Rumbo ya registró el pedido.
+// EnviadaARumbo dice si Rumbo ya reservó el traslado.
 func (t *Transferencia) EnviadaARumbo() bool {
 	return t.IDRumbo != ""
 }
@@ -141,27 +143,14 @@ func (t *Transferencia) EnviadaARumbo() bool {
 // PedirCancelacion registra que el usuario quiere cancelar. Si Rumbo todavía no tenía el pedido,
 // se cancela en el momento y devuelve true; si no, queda para mandársela a Rumbo.
 func (t *Transferencia) PedirCancelacion(motivo string, ahora time.Time) (canceladaYa bool, err error) {
-	if t.Estado.EsFinal() || t.Estado == EnCurso || t.Estado == CancelacionPendiente || t.CancelacionPorEnviar != nil {
+	if t.Estado.EsFinal() || t.Estado == EnCurso || t.CancelacionPorEnviar != nil {
 		return false, ErrNoCancelable
 	}
 	if !t.EnviadaARumbo() {
 		t.Motivo = motivo
-		t.CambiarEstado(Cancelada, "cancelada por el usuario antes de mandarla a Rumbo: "+motivo, ahora)
+		t.CambiarEstado(Cancelada, "cancelada por el usuario antes de reservar el traslado: "+motivo, ahora)
 		return true, nil
 	}
 	t.CancelacionPorEnviar = &motivo
-	t.CancelacionRechazada = false
 	return false, nil
-}
-
-// ResponderPropuesta registra la respuesta del usuario al horario que propuso Rumbo.
-func (t *Transferencia) ResponderPropuesta(acepta bool, ahora time.Time) error {
-	if t.Estado != EsperandoConfirmacion || t.RespuestaPorEnviar != nil {
-		return ErrNoHayPropuesta
-	}
-	if t.VencePropuesta != nil && !ahora.Before(*t.VencePropuesta) {
-		return ErrPropuestaVencida
-	}
-	t.RespuestaPorEnviar = &acepta
-	return nil
 }

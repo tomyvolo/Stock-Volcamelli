@@ -58,7 +58,7 @@ La primera vez tarda un par de minutos, porque los MySQL cargan sus tablas y dat
 | Qué | Dónde |
 |---|---|
 | Gateway (la única entrada a la API) | `http://localhost:8080` |
-| Grafana (usuario `admin`, contraseña la de `GRAFANA_ADMIN_PASSWORD`) | `http://localhost:3000`, tablero "Stock Volcamelli" |
+| Grafana (usuario `admin`, contraseña `admin`) | `http://localhost:3000`, tablero "Stock Volcamelli" |
 | Prometheus | `http://localhost:9090` |
 
 Hay un usuario de prueba por rol: `director@volcamelli.com`, `admin1@volcamelli.com`, y `vendedor1@volcamelli.com`. Las contraseñas no están en el repositorio; las tiene el equipo.
@@ -89,7 +89,44 @@ curl -X POST http://localhost:8080/api/create-users \
   -d '{"name": "Vendedor 2", "email": "vendedor2@volcamelli.com", "password": "...", "role": "VENDEDOR", "branchId": 1}'
 ```
 
-Responde `201` con el usuario creado, sin la contraseña, que se guarda hasheada con bcrypt. Con un email repetido responde `409`, y si lo intenta un vendedor o la cuenta de integración, `403`.
+Responde `201` con el usuario creado, sin la contraseña, que se guarda hasheada con bcrypt. Con un email repetido responde `409`, y si lo intenta un vendedor, `403`. El director también puede cambiarle el rol o la sucursal a un usuario con `PUT /api/users/{id}` y un body como `{"role": "VENDEDOR", "branchId": 2}`. El cambio se aplica cuando ese usuario vuelve a hacer login. Para borrar un usuario, el director usa `DELETE /api/users/{id}`, que responde `204`; no puede borrarse a sí mismo.
+
+Cualquier usuario puede ver las sucursales con su nombre y dirección (`GET /api/branches` y `GET /api/branches/{branchId}`). Solo el director puede crearlas (`POST /api/branches`) o cambiarlas (`PUT /api/branches/{branchId}`), con un body `{"name": "...", "address": "..."}`. También pueden ver a todos los usuarios de la empresa con su rol y su sucursal (`GET /api/users`, o `GET /api/users?branchId=1` para una sola sucursal), nunca con la contraseña. Las consultas de sucursales y de usuarios pasan por Memcached: un cambio se ve como mucho 60 segundos después.
+
+El director y el admin de sucursal pueden ajustar el stock, por ejemplo cuando llega mercadería o hay una rotura. El admin, solo en su sucursal:
+
+```bash
+curl -X POST http://localhost:8080/api/branches/1/products/1/adjustments \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "SALIDA", "quantity": 2, "reason": "Rotura"}'
+```
+
+Responde el total, lo reservado y el disponible que quedaron. Una salida que dejaría el total por debajo de lo reservado responde `409`. Cada ajuste queda en el historial del producto en esa sucursal: `GET /api/branches/1/products/1/movements`. El director también da de alta productos con `POST /api/products` y los modifica con `PUT /api/products/{id}`, con un body como `{"name": "Polenta", "description": "Paquete de 500 g", "supplier": null}`.
+
+Cualquier rol busca productos por texto, en el nombre y la descripción, ordenados por relevancia:
+
+```bash
+curl "http://localhost:8080/api/products/search?q=harina&supplier=Molinos%20del%20Sur&page=1&size=20" \
+  -H "Authorization: Bearer <token>"
+```
+
+`q` es obligatorio y `supplier` filtra por el nombre exacto del proveedor. Cuando se crea o se modifica un producto, aparece en la búsqueda en unos segundos.
+
+Cualquier usuario puede crear una transferencia que salga de su sucursal o llegue a ella. El director, con cualquier sucursal:
+
+```bash
+curl -X POST http://localhost:8080/api/transfers \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"productId": 1, "quantity": 4, "originBranchId": 1, "destinationBranchId": 2}'
+```
+
+Responde enseguida con la transferencia `RESERVADA` (o `SIN_STOCK` si no alcanza el disponible), y en segundo plano se reserva el traslado en Rumbo. Opcionalmente lleva `desiredArrival` (la hora de llegada, en ISO 8601) y `notes`. Transferencias reserva la franja de Rumbo que contiene esa hora o, si no tiene lugar o no se pidió hora, la primera con lugar. Cuando Rumbo la reserva, la transferencia pasa a `PROGRAMADA` y muestra la franja de llegada en `slotStart` y `slotEnd`. El estado y su historial se ven con `GET /api/transfers/{id}`, y la lista con `GET /api/transfers?branchId=1&status=PROGRAMADA`. Se cancela con `POST /api/transfers/{id}/cancel` y `{"reason": "..."}`.
+
+Transferencias habla con el Rumbo real, así que para probar las transferencias hace falta internet y tener en el `.env` su URL (`RUMBO_URL`) y las credenciales que entrega su equipo (`RUMBO_CLIENT_ID` y `RUMBO_CLIENT_SECRET`). Sin `RUMBO_URL`, Transferencias arranca igual pero no le manda nada a Rumbo, y las transferencias quedan `RESERVADA`. Así corremos las pruebas de carga. Transferencias consulta los cambios cada 60 segundos. `EN_CURSO` y `COMPLETADA` dependen de que un operador de Rumbo marque el viaje, así que el recorrido completo no avanza solo. Las franjas tienen un cupo que comparten todos los grupos, así que las transferencias de prueba las cancelamos al terminar.
+
+Cuando la transferencia termina, Inventario recibe el evento por RabbitMQ y mueve el stock: si quedó `COMPLETADA`, las unidades pasan al destino y se ven en `GET /api/branches/2/products/1/movements`; si quedó `RECHAZADA`, `CANCELADA` o `NO_REALIZADA`, vuelven al disponible del origen. Un evento que no se puede procesar queda en su cola de errores (`q.inventario.TrasladoCompletado.dlq` o `q.inventario.TrasladoCancelado.dlq`), que se ve en el panel de RabbitMQ.
 
 Cómo responde el sistema cuando algo falla:
 
@@ -98,6 +135,10 @@ Cómo responde el sistema cuando algo falla:
 | Se cae una instancia de Inventario | `docker compose stop inventario1` y repetir las consultas | Siguen respondiendo, ahora todas desde `inventario2`. Se ve en `docker compose logs nginx`, en el campo `instancia` |
 | Se caen las dos | `docker compose stop inventario1 inventario2` | El gateway responde `503 SERVICE_UNAVAILABLE`, nunca stock cero |
 | Volver a la normalidad | `docker compose start inventario1 inventario2` | En menos de 30 segundos NGINX vuelve a repartir entre las dos |
+| Se cae la caché | `docker compose stop memcached` y consultar `GET /api/branches` y `GET /api/users` | Siguen respondiendo, desde MySQL. En `docker compose logs sucursales` aparece que Memcached no respondió |
+| Inventario no está cuando termina una transferencia | Con una transferencia `EN_CURSO`, `docker compose stop inventario1 inventario2`; esperar a que quede `COMPLETADA` y `docker compose start inventario1 inventario2` | El evento espera en `q.inventario.TrasladoCompletado` y, cuando Inventario vuelve, el stock pasa al destino una sola vez |
+| Se cae Solr | `docker compose stop solr` y buscar | La búsqueda responde `502` ("La búsqueda no está disponible.") o, si Solr no contesta en 2 segundos, el `503` del gateway. Nunca una lista vacía. El catálogo y el stock siguen respondiendo desde MySQL. Con `docker compose start solr` vuelve a andar |
+| Llega un evento que no se puede leer | En el panel de RabbitMQ, publicar `hola` en el exchange `ex.TrasladoCompletado` | Inventario lo rechaza y queda en `q.inventario.TrasladoCompletado.dlq`. Los demás eventos se siguen procesando |
 
 Los tests unitarios usan los repositorios mock, así que no necesitan Docker. Se corren desde la carpeta de cada servicio, por ejemplo `cd servicios/inventario && go test ./...`.
 
@@ -117,8 +158,11 @@ Las bases se pueden abrir desde la compu con un cliente de MySQL, como Workbench
 | Base | Puerto | Usuario y contraseña (del `.env`) | Esquema |
 |---|---|---|---|
 | Usuarios | 3310 | `USUARIOS_DB_USER` / `USUARIOS_DB_PASSWORD` | `USUARIOS_DB_NAME` |
+| Sucursales | 3311 | `SUCURSALES_DB_USER` / `SUCURSALES_DB_PASSWORD` | `SUCURSALES_DB_NAME` |
 | Inventario | 3308 | `INVENTARIO_DB_USER` / `INVENTARIO_DB_PASSWORD` | `INVENTARIO_DB_NAME` |
 | Logs | 3309 | `LOGS_DB_USER` / `LOGS_DB_PASSWORD` | `LOGS_DB_NAME` |
+
+MongoDB, con las transferencias, se abre con MongoDB Compass en `mongodb://<MONGO_USER>:<MONGO_PASSWORD>@127.0.0.1:27017`, base `transferencias`. Las colas y los mensajes de RabbitMQ se ven en `http://localhost:15672`, con `RABBITMQ_USER` y `RABBITMQ_PASSWORD`. El índice de búsqueda se ve en el panel de Solr, `http://localhost:8983/solr/#/productos/query`.
 
 ## Cómo trabajamos con Git
 
@@ -163,6 +207,7 @@ Stock-Volcamelli/
 │   ├── mcp/
 │   └── tiempo-real/
 ├── nginx/              → balanceo entre las dos instancias de Inventario
-├── pruebas/carga/      → generador de carga para las pruebas de capacidad 
+├── pruebas/
+│   └── carga/          → generador de carga para las pruebas de capacidad
 └── observabilidad/     → Prometheus, Grafana y el esquema del MySQL de logs
 ```

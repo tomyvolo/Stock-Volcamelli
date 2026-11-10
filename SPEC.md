@@ -16,13 +16,13 @@ El sistema permite:
 
 - Administrar usuarios con su rol y su sucursal, y hacer login.
 - Administrar sucursales con su nombre y dirección.
-- Ver todas las sucursales con sus datos y los usuarios que trabajan en cada una.
+- Ver todas las sucursales con sus datos, y todos los usuarios de la empresa con su rol y su sucursal.
 - Administrar el catálogo de productos.
 - Consultar el stock disponible de cada producto en cada sucursal.
 - Hacer ajustes manuales de stock (entradas y salidas), por ejemplo cuando llega mercadería o hay una rotura.
 - Transferir productos entre sucursales, opcionalmente con una hora de llegada deseada.
-- Seguir cada transferencia hasta que llega: horario comprometido, viaje en curso y demoras.
-- Aceptar o rechazar el horario que propone el transporte, y cancelar una transferencia.
+- Seguir cada transferencia hasta que llega: franja de llegada, viaje en curso y demoras.
+- Cancelar una transferencia mientras el viaje no empezó.
 - Consultar el historial de movimientos de un producto en una sucursal.
 - Buscar en el catálogo por texto y proveedor, con los resultados ordenados por relevancia.
 - Ver los productos con stock bajo (5 unidades disponibles o menos) de una sucursal.
@@ -36,9 +36,9 @@ El sistema permite:
 |---|---|
 | Director general (`DIRECTOR`) | Ve y opera todas las sucursales: transferencias, ajustes, usuarios, sucursales y productos. No tiene sucursal asignada |
 | Admin de sucursal (`ADMIN_SUCURSAL`) | Lo mismo que el vendedor, más ajustes de stock en su sucursal y alta de vendedores de su sucursal |
-| Vendedor (`VENDEDOR`) | Consulta productos, stock, sucursales y usuarios de todas las sucursales. Crea, cancela y responde los horarios de las transferencias que salen de su sucursal o llegan a ella |
-| Grupo consumidor | Otro sistema que consulta nuestro catálogo y stock con una API key. Solo puede leer |
-| Rumbo | Servicio de transporte de otro grupo. Recibe nuestros pedidos de traslado, los acepta, propone otro horario o los rechaza, y hace el viaje |
+| Vendedor (`VENDEDOR`) | Consulta productos, stock, sucursales y usuarios de todas las sucursales. Crea y cancela las transferencias que salen de su sucursal o llegan a ella |
+| Grupo consumidor | Otro sistema que consulta nuestro catálogo y stock, y aumenta o reduce el stock de su propia base, con una API key |
+| Rumbo | Servicio de transporte de otro grupo. Nos dice qué franjas horarias tienen lugar, reserva nuestros traslados y hace el viaje |
 
 ## 5. Entidades
 
@@ -78,8 +78,8 @@ Cada cambio en el total de stock queda registrado como un movimiento.
 ### Transfer
 Una transferencia entre dos sucursales.
 - id, producto, cantidad, sucursal de origen, sucursal de destino, usuario que la creó, fecha, estado, historial de estados.
-- Opcionales: hora de llegada deseada, flexibilidad en minutos y observaciones.
-- Lo que informa Rumbo: id del traslado, horario propuesto y hasta cuándo se puede responder, hora comprometida, demora y motivo del rechazo o la cancelación.
+- Opcionales: hora de llegada deseada y observaciones.
+- Lo que informa Rumbo: id del traslado, franja en la que llega, demora y motivo del rechazo o la cancelación.
 
 Estados:
 
@@ -87,13 +87,11 @@ Estados:
 |---|---|
 | `SIN_STOCK` | El origen no tenía stock disponible suficiente. No se reservó nada |
 | `FALLIDA` | Inventario no respondió a tiempo. Si llegó a reservar, la reserva se libera |
-| `RESERVADA` | Las unidades están reservadas y esperamos que Rumbo revise el pedido |
-| `ESPERANDO_CONFIRMACION` | Se había pedido una hora, Rumbo propuso otra y hay 24 horas para aceptarla o rechazarla |
-| `PROGRAMADA` | Rumbo aceptó y hay una hora de llegada comprometida |
+| `RESERVADA` | Las unidades están reservadas y todavía no reservamos el traslado en Rumbo |
+| `PROGRAMADA` | Rumbo reservó el traslado y hay una franja de llegada comprometida |
 | `EN_CURSO` | El camión está viajando |
 | `COMPLETADA` | El traslado llegó y el stock pasa al destino |
-| `RECHAZADA` | Rumbo rechazó el traslado, un usuario rechazó el horario o nadie lo respondió a tiempo |
-| `CANCELACION_PENDIENTE` | Un usuario pidió cancelar con menos de 24 horas de anticipación y Rumbo todavía no lo aprobó |
+| `RECHAZADA` | Rumbo no pudo reservar el traslado o no pudimos mandarle el pedido a tiempo |
 | `CANCELADA` | La transferencia se canceló |
 | `NO_REALIZADA` | Rumbo no pudo hacer el traslado o lo interrumpió |
 
@@ -109,15 +107,15 @@ Son finales `SIN_STOCK`, `FALLIDA`, `COMPLETADA`, `RECHAZADA`, `CANCELADA` y `NO
 6. No se puede transferir más de lo que hay disponible en el origen.
 7. Si se indica una hora de llegada, tiene que ser futura.
 8. Al crear una transferencia, las unidades se reservan en el origen. El destino no recibe nada todavía.
-9. Si Rumbo propone otro horario y no se había pedido hora, el sistema lo acepta solo. Si se había pedido una, hay 24 horas para aceptar o rechazar la propuesta. Si la rechaza o no responde, la transferencia queda `RECHAZADA`.
+9. El sistema reserva en Rumbo la franja que contiene la hora pedida. Si esa franja no tiene lugar, o si no se pidió hora, reserva la primera franja con lugar. Si no hay lugar en los próximos 30 días, la transferencia queda `RECHAZADA`.
 10. Cuando el traslado llega, en un solo paso se resta del origen y se suma al destino.
 11. Si el traslado se rechaza, se cancela o no se realiza, la reserva se libera y el origen vuelve a tener esas unidades disponibles.
-12. Una transferencia se puede cancelar mientras el traslado no esté en curso. Si faltan menos de 24 horas para la llegada, la cancelación depende de que Rumbo la apruebe.
+12. Una transferencia se puede cancelar mientras el traslado no esté en curso.
 13. Si no pudimos mandarle el pedido a Rumbo en 24 horas, la transferencia queda `RECHAZADA`.
 14. Un producto tiene stock bajo cuando le quedan 5 unidades disponibles o menos en una sucursal.
-15. El grupo consumidor solo puede usar las consultas del contrato, con su API key.
-16. El vendedor y el admin de sucursal solo pueden crear, cancelar y responder los horarios de las transferencias que salen de su sucursal o llegan a ella. El director puede hacerlo con cualquiera.
-17. El director da de alta usuarios de cualquier rol, sucursales y productos. El admin de sucursal solo da de alta vendedores de su sucursal.
+15. El grupo consumidor solo puede usar las operaciones del contrato, con su API key. Lo que aumenta o reduce es el stock de la base de Inventario publicado, no el de nuestro sistema.
+16. El vendedor y el admin de sucursal solo pueden crear y cancelar las transferencias que salen de su sucursal o llegan a ella. El director puede hacerlo con cualquiera.
+17. El director da de alta usuarios de cualquier rol, sucursales y productos, y es el único que puede cambiarle el rol o la sucursal a un usuario o borrarlo. Nadie puede borrarse a sí mismo. El admin de sucursal solo da de alta vendedores de su sucursal.
 18. La sucursal y el rol de un usuario van dentro de su token. Si cambian, se aplican cuando vuelve a hacer login.
 
 ## 7. Integraciones
@@ -129,7 +127,7 @@ Son finales `SIN_STOCK`, `FALLIDA`, `COMPLETADA`, `RECHAZADA`, `CANCELADA` y `NO
 
 - Gestión de proveedores y compras a proveedores. Del proveedor solo guardamos el nombre en el producto.
 - Facturación, ventas y contabilidad.
-- Gestión de la logística: los vehículos, los choferes y las rutas los maneja Rumbo. Nosotros pedimos el traslado, coordinamos el horario y seguimos su estado.
+- Gestión de la logística: los vehículos, los choferes y las rutas los maneja Rumbo. Nosotros reservamos el traslado y seguimos su estado.
 - Avisos automáticos de stock bajo. El stock bajo se consulta con el filtro de la consulta de stock de cada sucursal.
 - Reposición automática y predicción de demanda.
 - Reportes o estadísticas.
@@ -150,13 +148,13 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 **CA-05 — Hora pasada.** Cuando se intenta crear una transferencia con una hora de llegada que ya pasó, entonces se rechaza y no se reserva nada.
 
-**CA-06 — Horario propuesto sin hora pedida.** Dada la transferencia de CA-01, creada sin hora de llegada, cuando Rumbo propone un horario, entonces el sistema lo acepta sin preguntarle a nadie, la transferencia pasa a `PROGRAMADA` cuando Rumbo lo confirma, y las 4 unidades siguen reservadas.
+**CA-06 — Traslado reservado.** Dada la transferencia de CA-01, creada sin hora de llegada, cuando Rumbo reserva el traslado, entonces la transferencia pasa a `PROGRAMADA` con la primera franja que tenía lugar, y las 4 unidades siguen reservadas.
 
-**CA-07 — Horario propuesto con hora pedida.** Dada una transferencia como la de CA-01 pero con hora de llegada pedida, cuando Rumbo propone otro horario, entonces la transferencia queda `ESPERANDO_CONFIRMACION`. Si un vendedor acepta, pasa a `PROGRAMADA` cuando Rumbo lo confirma. Si pasan 24 horas sin respuesta, queda `RECHAZADA` y el origen vuelve a tener 10 disponibles.
+**CA-07 — Franja llena.** Dada una transferencia como la de CA-01 pero con hora de llegada pedida, cuando la franja de esa hora no tiene lugar, entonces se reserva la franja siguiente que tenga lugar y la transferencia queda `PROGRAMADA` con esa franja.
 
 **CA-08 — Traslado completado.** Dada la transferencia de CA-01 `EN_CURSO`, cuando Rumbo informa que el traslado llegó, entonces la transferencia queda `COMPLETADA`, el origen queda con 6 (sin reservas), el destino con 6, y se registra un movimiento en cada sucursal.
 
-**CA-09 — Traslado rechazado.** Dada la transferencia de CA-01, cuando Rumbo rechaza el traslado, entonces la transferencia queda `RECHAZADA` con el motivo de Rumbo, el origen vuelve a tener 10 disponibles y el destino sigue con 2.
+**CA-09 — Traslado rechazado.** Dada la transferencia de CA-01, cuando Rumbo no tiene lugar en ninguna franja de los próximos 30 días, entonces la transferencia queda `RECHAZADA` con el motivo, el origen vuelve a tener 10 disponibles y el destino sigue con 2.
 
 **CA-10 — Cancelación.** Dada la transferencia de CA-01 `PROGRAMADA` para dentro de 3 días, cuando un vendedor la cancela, entonces queda `CANCELADA` y el origen vuelve a tener 10 disponibles.
 
@@ -180,7 +178,7 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 ### Usuarios y permisos
 
-**CA-19 — Permisos del vendedor.** Un vendedor de la sucursal 3 puede consultar productos, stock, sucursales y usuarios de todas las sucursales, y crear, cancelar y responder horarios de transferencias que salen de la 3 o llegan a ella. No puede hacer ajustes de stock ni crear usuarios, sucursales o productos.
+**CA-19 — Permisos del vendedor.** Un vendedor de la sucursal 3 puede consultar productos, stock, sucursales y usuarios de todas las sucursales, y crear y cancelar transferencias que salen de la 3 o llegan a ella. No puede hacer ajustes de stock ni crear usuarios, sucursales o productos.
 
 **CA-20 — Transferencia de otra sucursal.** Dado un vendedor de la sucursal 3, cuando intenta crear una transferencia de la sucursal 5 a la 7, o cancelar una que no pasa por la 3, entonces se rechaza y no cambia nada.
 
@@ -188,11 +186,11 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 **CA-22 — Permisos del director.** El director puede crear, cancelar y responder cualquier transferencia, hacer ajustes en cualquier sucursal y dar de alta usuarios de cualquier rol, sucursales y productos.
 
-**CA-23 — Usuarios por sucursal.** Cuando cualquier usuario abre la sección de sucursales, entonces ve cada sucursal con su nombre y dirección, y sus usuarios con nombre, email y rol. Nunca ve contraseñas.
+**CA-23 — Usuarios de la empresa.** Cuando cualquier usuario abre el panel de usuarios, entonces ve a los usuarios de todas las sucursales con su nombre, email, rol y sucursal, y los puede filtrar por sucursal. Nunca ve contraseñas.
 
 **CA-24 — Cambio de sucursal.** Dado un vendedor que pasa de la sucursal 3 a la 5, cuando vuelve a hacer login, entonces puede operar las transferencias de la 5 y ya no las de la 3.
 
-**CA-25 — Acceso del grupo consumidor.** Con su API key, el grupo consumidor puede consultar productos y stock. Sin la API key, o con una incorrecta, recibe `401`. No puede ver usuarios, crear transferencias ni modificar nada.
+**CA-25 — Acceso del grupo consumidor.** Con su API key, el grupo consumidor puede consultar productos y stock, y aumentar o reducir el stock de un producto en una sucursal. Si pide reducir más que el disponible, recibe `409` y el stock no cambia. Sin la API key, o con una incorrecta, recibe `401`. No puede ver usuarios, crear productos ni crear transferencias, y lo que cambia no toca el stock de nuestro sistema.
 
 ### Búsqueda, caché y balanceo
 
@@ -200,9 +198,9 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 **CA-27 — Búsqueda caída.** Cuando Solr no responde, entonces la búsqueda informa que no está disponible (no una lista vacía) y la consulta de stock de una sucursal sigue respondiendo.
 
-**CA-28 — Caché con vencimiento.** Dado que los usuarios de una sucursal ya se consultaron y quedaron en la caché, cuando su admin da de alta un vendedor, entonces el vendedor nuevo aparece en la sección como mucho 60 segundos después. Lo mismo con los datos de la sucursal: si se cambia la dirección, se ve la nueva como mucho 60 segundos después.
+**CA-28 — Caché con vencimiento.** Dado que la lista de usuarios ya se consultó y quedó en la caché, cuando un admin da de alta un vendedor, entonces el vendedor nuevo aparece en el panel de usuarios como mucho 60 segundos después. Lo mismo con los datos de la sucursal: si se cambia la dirección, se ve la nueva como mucho 60 segundos después.
 
-**CA-29 — Caché caída.** Cuando Memcached no responde, entonces la sección de sucursales y la creación de transferencias siguen andando, con los datos de MySQL y sin errores.
+**CA-29 — Caché caída.** Cuando Memcached no responde, entonces la sección de sucursales, el panel de usuarios y la creación de transferencias siguen andando, con los datos de MySQL y sin errores.
 
 **CA-30 — Una instancia de Inventario caída.** Cuando se apaga una de las dos instancias de Inventario, entonces las consultas de stock siguen respondiendo a través de la otra.
 
@@ -216,6 +214,6 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 ### Tiempo real
 
-**CA-34 — Pantalla que se actualiza sola.** Dado que un vendedor tiene abierta una transferencia `RESERVADA`, cuando Rumbo la acepta, entonces la pantalla muestra `PROGRAMADA` sin que el vendedor recargue.
+**CA-34 — Pantalla que se actualiza sola.** Dado que un vendedor tiene abierta una transferencia `RESERVADA`, cuando Rumbo reserva el traslado, entonces la pantalla muestra `PROGRAMADA` sin que el vendedor recargue.
 
 **CA-35 — Reconexión.** Cuando se corta la conexión de tiempo real y en ese rato cambia el stock de la sucursal que el usuario está mirando, entonces al reconectarse la pantalla muestra el stock actual.
