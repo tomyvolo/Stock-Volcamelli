@@ -22,6 +22,8 @@ services:
       INVENTARIO_URL: http://nginx
       TIEMPO_REAL_URL: http://tiempo-real:8085
       ASISTENTE_URL: http://asistente:8087
+      # Control de tráfico: pedidos por minuto que acepta de cada IP. En las pruebas de carga se pone en 0.
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
     depends_on:
       mysql-logs:
         condition: service_healthy
@@ -62,7 +64,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       MEMCACHED_ADDR: memcached:11211
       # Con false, las consultas van directo a MySQL. Sirve para medir con y sin caché.
-      CACHE_ENABLED: "true"
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
     depends_on:
       mysql-usuarios:
         condition: service_healthy
@@ -85,7 +87,7 @@ services:
       MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
       MEMCACHED_ADDR: memcached:11211
       # Con false, las consultas van directo a MySQL. Sirve para medir con y sin caché.
-      CACHE_ENABLED: "true"
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
     depends_on:
       mysql-sucursales:
         condition: service_healthy

@@ -80,7 +80,7 @@ func (s *ProductsService) UpdateProduct(id uint, name, description string, suppl
 	return product, nil
 }
 
-// SearchProducts busca por texto en el nombre y la descripción, ordenado por relevancia.
+// SearchProducts busca por texto en el nombre y la descripción, ordenado por relevancia o por nombre.
 func (s *ProductsService) SearchProducts(query products.SearchQuery) (products.SearchResultList, error) {
 	result, err := s.Search.Search(query)
 	if err != nil {

@@ -2,6 +2,8 @@ package aplicacion
 
 import (
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"transferencias/dominio"
@@ -13,9 +15,13 @@ import (
 type repoFalso struct {
 	transferencias map[string]*dominio.Transferencia
 	ultimaConsulta time.Time
+	errGuardar     error // simula MongoDB fallando al guardar
 }
 
 func (r *repoFalso) Guardar(t *dominio.Transferencia) error {
+	if r.errGuardar != nil {
+		return r.errGuardar
+	}
 	r.transferencias[t.ID] = t
 	return nil
 }
@@ -90,20 +96,42 @@ func (sucursalesFalsas) Obtener(sucursalID uint, trackID string) (dominio.Ubicac
 
 // transporteFalso responde lo que le cargue cada test.
 type transporteFalso struct {
-	respSolicitar  dominio.Novedad
-	errSolicitar   error
+	// franjas con lugar de cada día ("2026-11-02").
+	franjas         map[string][]dominio.Franja
+	diasConsultados int
+	// errReservar son los errores que devuelven las próximas reservas, en orden; errSiempre, todas.
+	errReservar    []error
+	errSiempre     error
+	motivoRechazo  string
+	reservadas     []dominio.Franja
+	respReservar   dominio.Novedad
 	cambios        []dominio.Novedad
-	respResponder  dominio.Novedad
-	respondido     *bool
+	respConsultar  dominio.Novedad
 	respCancelar   dominio.Novedad
 	errCancelar    error
 	motivoCancelar string
+	canceladoEn    string // id de Rumbo del traslado que se mandó a cancelar
 }
 
-func (f *transporteFalso) Solicitar(t *dominio.Transferencia) (dominio.Novedad, error) {
-	n := f.respSolicitar
+func (f *transporteFalso) Franjas(fecha time.Time) ([]dominio.Franja, error) {
+	f.diasConsultados++
+	return f.franjas[fecha.Format("2006-01-02")], nil
+}
+
+func (f *transporteFalso) Reservar(t *dominio.Transferencia) (dominio.Novedad, error) {
+	f.reservadas = append(f.reservadas, *t.Franja)
+	if f.errSiempre != nil {
+		return dominio.Novedad{}, f.errSiempre
+	}
+	if len(f.errReservar) > 0 {
+		err := f.errReservar[0]
+		f.errReservar = f.errReservar[1:]
+		return dominio.Novedad{Motivo: f.motivoRechazo}, err
+	}
+	n := f.respReservar
 	n.TransferenciaID = t.ID
-	return n, f.errSolicitar
+	n.Franja = t.Franja
+	return n, nil
 }
 
 func (f *transporteFalso) Cambios(desde time.Time) ([]dominio.Novedad, time.Time, error) {
@@ -111,32 +139,42 @@ func (f *transporteFalso) Cambios(desde time.Time) ([]dominio.Novedad, time.Time
 }
 
 func (f *transporteFalso) Consultar(t *dominio.Transferencia) (dominio.Novedad, error) {
-	return dominio.Novedad{}, puertos.ErrNoDisponible
-}
-
-func (f *transporteFalso) ResponderPropuesta(t *dominio.Transferencia, acepta bool) (dominio.Novedad, error) {
-	f.respondido = &acepta
-	return f.respResponder, nil
+	return f.respConsultar, nil
 }
 
 func (f *transporteFalso) Cancelar(t *dominio.Transferencia, motivo string) (dominio.Novedad, error) {
 	f.motivoCancelar = motivo
+	f.canceladoEn = t.IDRumbo
 	return f.respCancelar, f.errCancelar
 }
 
 type eventosFalsos struct {
+	mu         sync.Mutex
 	publicados []puertos.Evento
+	espera     *sync.WaitGroup // los eventos que el servicio publica en segundo plano
+	lento      time.Duration   // simula RabbitMQ caído, que tarda en reintentos
 }
 
 func (e *eventosFalsos) Publicar(evento puertos.Evento) error {
+	time.Sleep(e.lento)
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.publicados = append(e.publicados, evento)
 	return nil
+}
+
+// todos espera los eventos en segundo plano y devuelve todo lo publicado.
+func (e *eventosFalsos) todos() []puertos.Evento {
+	e.espera.Wait()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.publicados)
 }
 
 // tipos devuelve los tipos de evento publicados para una transferencia.
 func (e *eventosFalsos) tipos(transferenciaID string) []string {
 	var tipos []string
-	for _, evento := range e.publicados {
+	for _, evento := range e.todos() {
 		if evento.TransferenciaID == transferenciaID {
 			tipos = append(tipos, evento.Tipo)
 		}

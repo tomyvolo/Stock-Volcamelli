@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -56,14 +57,27 @@ func main() {
 	}
 	gatewayProxy := proxy.NewProxy(logStore)
 
+	// Control de tráfico: cuántos pedidos por minuto acepta de cada IP. Con 0 no limita (pruebas de carga).
+	rateLimit := 300
+	if value := os.Getenv("RATE_LIMIT_PER_MINUTE"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			log.Fatalf("RATE_LIMIT_PER_MINUTE tiene que ser un número: %v", err)
+		}
+		rateLimit = parsed
+	}
+	// Uno solo para todas las rutas, así cada IP tiene un único contador.
+	limiter := utils.RateLimit(rateLimit)
+
 	router.Use(gin.Recovery())
 	// Estas dos rutas quedan fuera del grupo medido para no contar las sondas.
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	router.GET("/health", controllers.Health)
 
-	// Todo lo que entra por /api recibe un TrackID nuevo, queda medido y deja un log al entrar y al salir.
+	// Todo lo que entra por /api recibe un TrackID nuevo, queda medido, deja un log al entrar y al salir,
+	// y pasa por el control de tráfico antes de validar el token (así también frena intentos de login).
 	api := router.Group("/api")
-	api.Use(observability.RecordMetrics, observability.AddTrackID, observability.LogRequest(logStore))
+	api.Use(observability.RecordMetrics, observability.AddTrackID, observability.LogRequest(logStore), limiter)
 
 	// El login no pide token.
 	api.POST("/auth/login", gatewayProxy.Forward("usuarios", usersURL))
@@ -111,13 +125,13 @@ func main() {
 	// Tiempo Real: la conexión queda abierta hasta una hora, así que no entra en las métricas de latencia
 	// (arruinaría el p95 de todo lo demás). Tiene TrackID, logs y token como cualquier otro pedido.
 	realtime := router.Group("/api")
-	realtime.Use(observability.AddTrackID, observability.LogRequest(logStore), utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR"))
+	realtime.Use(observability.AddTrackID, observability.LogRequest(logStore), limiter, utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR"))
 	realtime.GET("/events", gatewayProxy.Stream("tiempo-real", realtimeURL))
 
 	// Asistente: una pregunta puede tardar varios segundos, así que tampoco entra en las métricas de latencia.
 	// El Asistente cuenta sus propias respuestas. Es la única ruta que recibe el token del usuario (ADR-018).
 	assistant := router.Group("/api/assistant")
-	assistant.Use(observability.AddTrackID, observability.LogRequest(logStore), utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR"))
+	assistant.Use(observability.AddTrackID, observability.LogRequest(logStore), limiter, utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR"))
 	assistant.POST("/chat", gatewayProxy.Assistant("asistente", assistantURL))
 	assistant.POST("/confirm", gatewayProxy.Assistant("asistente", assistantURL))
 

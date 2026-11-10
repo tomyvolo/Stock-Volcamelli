@@ -32,16 +32,16 @@ type Usuario struct {
 
 // Pedido es lo que carga el usuario para crear una transferencia.
 type Pedido struct {
-	ProductoID        uint
-	Cantidad          int
-	OrigenID          uint
-	DestinoID         uint
-	HoraLlegada       *time.Time
-	ToleranciaMinutos int
-	Observaciones     string
+	ProductoID    uint
+	Cantidad      int
+	OrigenID      uint
+	DestinoID     uint
+	HoraLlegada   *time.Time
+	Observaciones string
 }
 
-// Servicio tiene los casos de uso. Ahora y NuevoID se pueden reemplazar en los tests.
+// Servicio tiene los casos de uso. Ahora y NuevoID se pueden reemplazar en los tests. Transporte puede
+// ser nil: sin Rumbo configurado, las transferencias se crean y quedan RESERVADA (ADR-009).
 type Servicio struct {
 	Repo       puertos.Repositorio
 	Inventario puertos.Inventario
@@ -53,9 +53,22 @@ type Servicio struct {
 	NuevoID    func() string
 
 	// Los procesos de fondo y los pedidos de los usuarios pueden querer cambiar la misma transferencia
-	// a la vez. Cada cambio la lee de nuevo y la guarda con este lock tomado, así ninguno pisa al otro.
-	// Alcanza con un lock en memoria porque Transferencias corre en una sola instancia.
-	mu sync.Mutex
+	// a la vez. Cada cambio la lee de nuevo y la guarda con el lock de esa transferencia tomado, así
+	// ninguno pisa al otro. Es un lock por transferencia: mientras el proceso de fondo espera a Rumbo
+	// por una, las demás se pueden cancelar sin esperar. Alcanza con locks en memoria porque
+	// Transferencias corre en una sola instancia.
+	locks sync.Map // id de la transferencia -> *sync.Mutex
+
+	// Los eventos de los pedidos de los usuarios se publican en segundo plano. Los tests esperan acá a que terminen.
+	publicando sync.WaitGroup
+}
+
+// bloquear toma el lock de la transferencia y devuelve la función que lo suelta.
+func (s *Servicio) bloquear(id string) func() {
+	lock, _ := s.locks.LoadOrStore(id, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func puedeOperar(u Usuario, origenID, destinoID uint) bool {
@@ -66,13 +79,13 @@ func puedeOperar(u Usuario, origenID, destinoID uint) bool {
 }
 
 // Crear arma la transferencia, trae los datos de las sucursales y del producto, y reserva en el origen.
-// El usuario ve el resultado enseguida: RESERVADA, SIN_STOCK o FALLIDA. El pedido a Rumbo sale en segundo plano.
+// El usuario ve el resultado enseguida: RESERVADA, SIN_STOCK o FALLIDA. La reserva en Rumbo sale en segundo plano.
 func (s *Servicio) Crear(pedido Pedido, usuario Usuario, trackID string) (*dominio.Transferencia, error) {
 	if !puedeOperar(usuario, pedido.OrigenID, pedido.DestinoID) {
 		return nil, ErrSinPermiso
 	}
 	t, err := dominio.Nueva(s.NuevoID(), pedido.ProductoID, pedido.Cantidad, pedido.OrigenID, pedido.DestinoID, usuario.ID,
-		pedido.HoraLlegada, pedido.ToleranciaMinutos, pedido.Observaciones, s.Ahora())
+		pedido.HoraLlegada, pedido.Observaciones, s.Ahora())
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +128,7 @@ func (s *Servicio) Crear(pedido Pedido, usuario Usuario, trackID string) (*domin
 		}
 		return nil, err
 	}
-	s.publicar(t)
+	s.publicarSinEsperar(t)
 	return t, nil
 }
 
@@ -142,11 +155,10 @@ func (s *Servicio) Listar(filtro puertos.Filtro) ([]*dominio.Transferencia, int6
 	return s.Repo.Listar(filtro)
 }
 
-// Cancelar registra el pedido del usuario. Si Rumbo todavía no tenía el pedido, se cancela en el momento
+// Cancelar registra el pedido del usuario. Si Rumbo todavía no reservó el traslado, se cancela en el momento
 // y se libera la reserva; si no, se le manda la cancelación a Rumbo en segundo plano.
 func (s *Servicio) Cancelar(id string, usuario Usuario, motivo string) (*dominio.Transferencia, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.bloquear(id)()
 	t, err := s.Obtener(id)
 	if err != nil {
 		return nil, err
@@ -162,27 +174,7 @@ func (s *Servicio) Cancelar(id string, usuario Usuario, motivo string) (*dominio
 		return nil, err
 	}
 	if canceladaYa {
-		s.publicar(t)
-	}
-	return t, nil
-}
-
-// Responder registra la respuesta del usuario al horario propuesto. Se le manda a Rumbo en segundo plano.
-func (s *Servicio) Responder(id string, usuario Usuario, acepta bool) (*dominio.Transferencia, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, err := s.Obtener(id)
-	if err != nil {
-		return nil, err
-	}
-	if !puedeOperar(usuario, t.OrigenID, t.DestinoID) {
-		return nil, ErrSinPermiso
-	}
-	if err := t.ResponderPropuesta(acepta, s.Ahora()); err != nil {
-		return nil, err
-	}
-	if err := s.Repo.Guardar(t); err != nil {
-		return nil, err
+		s.publicarSinEsperar(t)
 	}
 	return t, nil
 }
@@ -190,6 +182,22 @@ func (s *Servicio) Responder(id string, usuario Usuario, acepta bool) (*dominio.
 // publicar avisa cada cambio de estado y, si la transferencia terminó, le dice a Inventario
 // que confirme o libere la reserva. Si no se puede publicar, queda en el log de error.
 func (s *Servicio) publicar(t *dominio.Transferencia) {
+	s.enviar(s.eventos(t))
+}
+
+// publicarSinEsperar es publicar para los pedidos de los usuarios. Con RabbitMQ caído, cada evento
+// tarda hasta 7 segundos en reintentos, y el gateway corta a los 5: el usuario veía un error aunque la
+// transferencia ya estaba guardada, y si volvía a intentar la creaba dos veces.
+func (s *Servicio) publicarSinEsperar(t *dominio.Transferencia) {
+	eventos := s.eventos(t)
+	s.publicando.Add(1)
+	go func() {
+		defer s.publicando.Done()
+		s.enviar(eventos)
+	}()
+}
+
+func (s *Servicio) eventos(t *dominio.Transferencia) []puertos.Evento {
 	eventos := []puertos.Evento{{Tipo: puertos.TransferenciaActualizada}}
 	switch {
 	case t.Estado == dominio.Completada:
@@ -197,15 +205,21 @@ func (s *Servicio) publicar(t *dominio.Transferencia) {
 	case t.Estado.LiberaLaReserva():
 		eventos = append(eventos, puertos.Evento{Tipo: puertos.TrasladoCancelado, Motivo: t.Motivo})
 	}
+	for i := range eventos {
+		eventos[i].ID = s.NuevoID()
+		eventos[i].TransferenciaID = t.ID
+		eventos[i].Estado = t.Estado
+		eventos[i].OrigenID = t.OrigenID
+		eventos[i].DestinoID = t.DestinoID
+		eventos[i].TrackID = t.TrackID
+	}
+	return eventos
+}
+
+func (s *Servicio) enviar(eventos []puertos.Evento) {
 	for _, evento := range eventos {
-		evento.ID = s.NuevoID()
-		evento.TransferenciaID = t.ID
-		evento.Estado = t.Estado
-		evento.OrigenID = t.OrigenID
-		evento.DestinoID = t.DestinoID
-		evento.TrackID = t.TrackID
 		if err := s.Eventos.Publicar(evento); err != nil {
-			s.Registro.Escribir(t.TrackID, "error", fmt.Sprintf("no se pudo publicar %s de la transferencia %s: %v", evento.Tipo, t.ID, err))
+			s.Registro.Escribir(evento.TrackID, "error", fmt.Sprintf("no se pudo publicar %s de la transferencia %s: %v", evento.Tipo, evento.TransferenciaID, err))
 		}
 	}
 }

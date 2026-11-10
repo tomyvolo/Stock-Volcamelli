@@ -1,7 +1,7 @@
 # ADR-018 — Asistente con MCP
 
 ## Estado
-Propuesto.
+Aceptado.
 
 ## Contexto
 Muchas tareas del usuario son preguntas rápidas que hoy requieren navegar varias pantallas: "¿cuánta harina queda en Córdoba Centro?", "¿qué productos tienen stock bajo en Nueva Córdoba?", "¿en qué estado está la transferencia de ayer?". Queremos que pueda hacerlas escribiendo, desde un chat en el frontend, y que el asistente también pueda crear una transferencia, siempre con su confirmación.
@@ -31,14 +31,28 @@ Para que un modelo de lenguaje opere el sistema usamos MCP (Model Context Protoc
 ### Permisos
 El servidor MCP llama al gateway con **el token del usuario que está chateando**. El asistente no tiene permisos propios: puede hacer exactamente lo que puede hacer ese usuario, y se aplican los mismos controles que a cualquier otro pedido: el gateway controla el rol y Transferencias controla la sucursal. Por ejemplo, un vendedor no puede crear por chat una transferencia que no sale de su sucursal ni llega a ella.
 
+Para eso, el gateway le pasa el header `Authorization` solo a la ruta `/api/assistant/*`. Los demás servicios siguen sin recibir el token, porque les alcanza con los datos del usuario que ya les manda el gateway.
+
 ### Confirmación antes de crear
-`crear_transferencia` es la única herramienta que cambia algo. Cuando el modelo la pide, el Asistente no la ejecuta: le devuelve al frontend la tarjeta con producto, cantidad, origen y destino. Solo si el usuario toca Confirmar, el Asistente ejecuta la herramienta. Así un error del modelo nunca crea una transferencia que el usuario no vio.
+`crear_transferencia` es la única herramienta que cambia algo. Cuando el modelo la pide, el Asistente no la ejecuta: `POST /api/assistant/chat` le devuelve al frontend la tarjeta con producto, cantidad, origen y destino. Solo si el usuario toca Confirmar, el frontend llama a `POST /api/assistant/confirm` con esos datos y el Asistente ejecuta la herramienta, sin volver a pasar por el modelo. Así un error del modelo nunca crea una transferencia que el usuario no vio.
+
+El modelo pide la herramienta con ids, y con un id el usuario no puede controlar qué está confirmando. Por eso, antes de armar la tarjeta, el Asistente busca los nombres del producto y de las sucursales con las herramientas que ya existen. Si alguno no existe, no muestra la tarjeta y se lo avisa al usuario.
+
+Si `POST /api/transfers` no responde a tiempo, puede ser que la transferencia se haya creado igual. En ese caso el chat no dice que falló: le pide al usuario que revise la lista de transferencias antes de volver a intentarlo.
+
+### Tiempos
+Un modelo puede tardar varios segundos, y cada pregunta puede dar hasta 5 vueltas. Por eso, en la ruta `/api/assistant/*` el gateway espera hasta 30 segundos, y no los 2 de las demás rutas. El servidor MCP espera hasta 6 segundos a cada llamada al gateway: un poco más que los 5 que el gateway le da a Transferencias para crear una transferencia, para recibir su respuesta en lugar de cortar antes. El Asistente, a su vez, espera 7 segundos al servidor MCP ([ADR-010](ADR-010-resiliencia.md)).
 
 ### Modelo
 El Asistente habla con el modelo usando la API compatible con OpenAI, que ofrecen la mayoría de los proveedores. El proveedor, el modelo y la clave van en variables de entorno, así que cambiar de modelo no requiere tocar código:
 
-- **Desarrollo:** un modelo local con Ollama, sin costo.
-- **Demo:** un modelo en la nube (Groq, Gemini o Claude Haiku), que responde más rápido y elige mejor las herramientas.
+| Variable | Qué es | Con Groq |
+|---|---|---|
+| `MODEL_URL` | La dirección de la API del proveedor | `https://api.groq.com/openai/v1` |
+| `MODEL_NAME` | El modelo | `openai/gpt-oss-120b` |
+| `MODEL_API_KEY` | La clave, que va solo en el `.env` | La que da la consola de Groq |
+
+Usamos el plan gratis de Groq, tanto para desarrollar como para la demo, así probamos siempre lo mismo que vamos a mostrar. Si sus límites se quedan cortos, pasamos a otro proveedor compatible, como Gemini, cambiando esas variables.
 
 ### Conversación
 El historial lo guarda el frontend y lo manda en cada mensaje (los últimos 20). El Asistente no guarda nada entre pedidos. Cada pregunta puede hacer como máximo 5 vueltas de herramientas; si el modelo no termina, responde que no pudo resolverlo.
@@ -49,6 +63,7 @@ El historial lo guarda el frontend y lo manda en cada mensaje (los últimos 20).
 
 ## Consecuencias
 - Son dos servicios más (Asistente y servidor MCP), una ruta más en el gateway (`/api/assistant/*`) y una dependencia externa: el proveedor del modelo.
+- El SDK de MCP pide Go 1.25, así que estos dos servicios usan esa versión y el resto sigue en 1.22. Cada servicio es un módulo aparte, así que no se afectan entre sí.
 - Si el modelo no está disponible, el chat responde que el asistente no está disponible. El resto del sistema no se entera.
 - El modelo puede entender mal una pregunta y dar una respuesta equivocada. Para consultas el riesgo es bajo, porque los datos salen de nuestra API; para crear, está la confirmación.
 - El costo depende del proveedor y de cuánto se use. Para la demo entra en los planes gratuitos o cuesta muy poco ([ADR-013](ADR-013-capacidad-y-costos.md)).

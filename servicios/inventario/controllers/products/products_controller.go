@@ -55,8 +55,9 @@ func (c *ProductsController) List(ctx *gin.Context) {
 	})
 }
 
-// Search responde GET /api/products/search?q=harina&supplier=Molinos del Sur&page=1&size=20.
+// Search responde GET /api/products/search?q=harina&supplier=Molinos del Sur&sort=nombre&page=1&size=20.
 // El texto es obligatorio. Si Solr no responde, devuelve 502 y no una lista vacía, que parecería que no hay productos.
+// sort es relevancia (si no viene) o nombre, de la A a la Z.
 func (c *ProductsController) Search(ctx *gin.Context) {
 	start := time.Now()
 	trackID := ctx.GetString("track_id")
@@ -66,13 +67,18 @@ func (c *ProductsController) Search(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, "El parámetro q es obligatorio."))
 		return
 	}
+	sort := ctx.DefaultQuery("sort", products.SortRelevance)
+	if sort != products.SortRelevance && sort != products.SortName {
+		ctx.JSON(http.StatusBadRequest, utils.ErrorResponse(utils.CodeInvalidRequest, "El parámetro sort tiene que ser relevancia o nombre."))
+		return
+	}
 	page, size, err := utils.ParsePagination(ctx)
 	if err != nil {
 		return
 	}
 
 	result, err := c.Service.SearchProducts(products.SearchQuery{
-		Text: text, Supplier: strings.TrimSpace(ctx.Query("supplier")), Page: page, Size: size,
+		Text: text, Supplier: strings.TrimSpace(ctx.Query("supplier")), Page: page, Size: size, Sort: sort,
 	})
 	if err != nil {
 		c.Logs.Write(trackID, stage, "error", "buscar productos: "+err.Error())

@@ -4,7 +4,7 @@
 Aceptado.
 
 ## Contexto
-Una transferencia cambia de estado mientras el usuario la está mirando: Rumbo propone un horario, la acepta, el camión sale, llega. Lo mismo el stock: otra persona reserva o ajusta y el disponible de la pantalla queda viejo. Sin nada más, el usuario tiene que recargar para enterarse.
+Una transferencia cambia de estado mientras el usuario la está mirando: Rumbo reserva el traslado, el camión sale, llega. Lo mismo el stock: otra persona reserva o ajusta y el disponible de la pantalla queda viejo. Sin nada más, el usuario tiene que recargar para enterarse.
 
 Esos cambios ya pasan por RabbitMQ como eventos ([ADR-016](ADR-016-comunicacion-entre-servicios.md)), así que lo que falta es llevarlos hasta el navegador.
 
@@ -18,7 +18,7 @@ Un servicio nuevo, **Tiempo Real** (Go), que:
    - `StockActualizado`: sucursal, producto y el nuevo disponible. Inventario la publica después de cada transacción que cambia el disponible: un ajuste, una reserva, una liberación o una confirmación. La confirmación cambia dos sucursales, así que publica uno por cada una.
 2. Mantiene abiertas las conexiones de los navegadores y les manda cada evento apenas llega.
 
-El evento de la transferencia no trae el horario ni la demora. Cuando llega, el frontend vuelve a pedir esa transferencia y trae todos sus datos, así el evento no tiene que copiar todo lo que tiene la transferencia.
+El evento de la transferencia no trae la franja ni la demora. Cuando llega, el frontend vuelve a pedir esa transferencia y trae todos sus datos, así el evento no tiene que copiar todo lo que tiene la transferencia.
 
 ### La cola de Tiempo Real
 Tiempo Real enlaza su propia cola a cada exchange, como cualquier consumidor, pero la cola se borra cuando el servicio se desconecta. Si Tiempo Real estuvo caído, los eventos de ese rato no le sirven a nadie: los navegadores que estaban conectados ya recargaron al reconectar. Con una cola que queda, esos eventos se acumularían para mandarse tarde.

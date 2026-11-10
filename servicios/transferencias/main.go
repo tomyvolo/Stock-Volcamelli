@@ -57,11 +57,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("no se pudo conectar a MongoDB: %v", err)
 	}
-	if os.Getenv("RUMBO_CLIENT_ID") == "" || os.Getenv("RUMBO_CLIENT_SECRET") == "" {
-		log.Fatal("faltan las variables de entorno RUMBO_CLIENT_ID y RUMBO_CLIENT_SECRET")
-	}
-
-	// Todas las llamadas a otros servicios esperan como mucho 2 segundos.
+	// Las llamadas a nuestros otros servicios esperan como mucho 2 segundos; a Rumbo, 5 (ADR-010).
 	cliente := &http.Client{Timeout: 2 * time.Second}
 
 	// Los adaptadores se arman acá y se le pasan al centro, que solo conoce los puertos.
@@ -70,14 +66,24 @@ func main() {
 		// Inventario se consulta siempre a través de NGINX, que reparte entre sus dos instancias.
 		Inventario: inventario.Inventario{BaseURL: entorno("INVENTARIO_URL", "http://localhost:8082"), Client: cliente},
 		Sucursales: sucursales.Sucursales{BaseURL: entorno("SUCURSALES_URL", "http://localhost:8083"), Client: cliente},
-		Transporte: &rumbo.Cliente{
-			BaseURL: entorno("RUMBO_URL", "http://localhost:4010"), ClientID: os.Getenv("RUMBO_CLIENT_ID"),
-			ClientSecret: os.Getenv("RUMBO_CLIENT_SECRET"), HTTP: cliente, Registro: logs,
-		},
-		Eventos:  &rabbitmq.Publicador{URL: entorno("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")},
-		Registro: logs,
-		Ahora:    time.Now,
-		NuevoID:  nuevoID,
+		Eventos:    &rabbitmq.Publicador{URL: entorno("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")},
+		Registro:   logs,
+		Ahora:      time.Now,
+		NuevoID:    nuevoID,
+	}
+
+	// Sin RUMBO_URL no le mandamos nada a Rumbo y las transferencias quedan RESERVADA. Así corremos las
+	// pruebas de carga, sin ocupar el cupo de franjas que Rumbo comparte con los otros grupos (ADR-013).
+	if rumboURL := os.Getenv("RUMBO_URL"); rumboURL != "" {
+		if os.Getenv("RUMBO_CLIENT_ID") == "" || os.Getenv("RUMBO_CLIENT_SECRET") == "" {
+			log.Fatal("con RUMBO_URL hacen falta también RUMBO_CLIENT_ID y RUMBO_CLIENT_SECRET")
+		}
+		servicio.Transporte = &rumbo.Cliente{
+			BaseURL: rumboURL, ClientID: os.Getenv("RUMBO_CLIENT_ID"), ClientSecret: os.Getenv("RUMBO_CLIENT_SECRET"),
+			HTTP: &http.Client{Timeout: rumbo.Timeout}, Registro: logs,
+		}
+	} else {
+		logs.Escribir("", "warn", "sin RUMBO_URL: las transferencias se crean pero no se reservan en Rumbo")
 	}
 	controllers := adaptadorHTTP.Controllers{Servicio: servicio, Registro: logs}
 
@@ -95,7 +101,6 @@ func main() {
 	api.GET("/transfers", controllers.Listar)
 	api.GET("/transfers/:transferId", controllers.Obtener)
 	api.POST("/transfers/:transferId/cancel", controllers.Cancelar)
-	api.POST("/transfers/:transferId/schedule-response", controllers.Responder)
 
 	port := entorno("PORT", "8084")
 	logs.Escribir("", "info", "transferencias iniciado en el puerto "+port)

@@ -15,13 +15,13 @@ flowchart LR
     D -->|"Opera todas las sucursales;<br/>administra usuarios, sucursales y productos"| SV
     A -->|"Ajustes y vendedores de su sucursal,<br/>transferencias de su sucursal"| SV
     V -->|"Consulta todo; crea, sigue y cancela<br/>transferencias de su sucursal"| SV
-    C -->|"Consulta catálogo y stock disponible"| SV
-    SV -->|"Pide traslados, sigue el viaje,<br/>responde horarios y cancela"| R
+    C -->|"Consulta catálogo y stock;<br/>aumenta y reduce su stock"| SV
+    SV -->|"Reserva traslados, sigue el viaje<br/>y cancela"| R
     SV -->|"Preguntas del asistente"| LLM
 ```
 
 - **Director general, admin de sucursal y vendedor** usan el sistema desde el frontend. El admin de sucursal y el vendedor trabajan en una sola sucursal; el director, en todas.
-- **El grupo consumidor** es otro sistema que consulta nuestro catálogo y stock con una API key, directo a Inventario publicado. Solo puede leer.
+- **El grupo consumidor** es otro sistema que consulta nuestro catálogo y stock con una API key, directo a Inventario publicado. También aumenta y reduce el stock, pero el de la base de Inventario publicado, que es solo suya.
 - **Rumbo** es el servicio de transporte de otro grupo. Le pedimos cada traslado y lo seguimos hasta que termina. Si llega, el stock pasa al destino. Si se rechaza, se cancela o no se realiza, vuelve a estar disponible en el origen.
 - **El proveedor del modelo de lenguaje** es el servicio externo que usa el asistente del frontend para entender las preguntas y elegir qué herramientas usar. En desarrollo es un modelo local.
 

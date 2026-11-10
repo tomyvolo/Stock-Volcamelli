@@ -21,19 +21,15 @@ type transferenciaJSON struct {
 	CreatedAt             time.Time      `json:"createdAt"`
 	Status                dominio.Estado `json:"status"`
 	DesiredArrival        *time.Time     `json:"desiredArrival"`
-	ToleranceMinutes      int            `json:"toleranceMinutes"`
 	Notes                 string         `json:"notes"`
-	ProposedArrival       *time.Time     `json:"proposedArrival"`
-	ProposalExpiresAt     *time.Time     `json:"proposalExpiresAt"`
-	CommittedArrival      *time.Time     `json:"committedArrival"`
-	DelayMinutes          int            `json:"delayMinutes"`
-	Reason                string         `json:"reason"`
-	// La cancelación o la respuesta al horario ya se pidieron y se le están mandando a Rumbo.
-	CancellationRequested bool  `json:"cancellationRequested"`
-	ScheduleResponse      *bool `json:"scheduleResponse"`
-	// Rumbo no aprobó la última cancelación pendiente.
-	CancellationRejected bool          `json:"cancellationRejected"`
-	History              []historyJSON `json:"history"`
+	// La franja en la que Rumbo se comprometió a que llegue. Vacía mientras no la reserva.
+	SlotStart    *time.Time `json:"slotStart"`
+	SlotEnd      *time.Time `json:"slotEnd"`
+	DelayMinutes int        `json:"delayMinutes"`
+	Reason       string     `json:"reason"`
+	// La cancelación ya se pidió y se le está mandando a Rumbo.
+	CancellationRequested bool          `json:"cancellationRequested"`
+	History               []historyJSON `json:"history"`
 }
 
 type historyJSON struct {
@@ -47,15 +43,17 @@ func aJSON(t *dominio.Transferencia) transferenciaJSON {
 	for _, cambio := range t.Historial {
 		history = append(history, historyJSON{Status: cambio.Estado, Date: cambio.Fecha, Detail: cambio.Detalle})
 	}
+	var slotStart, slotEnd *time.Time
+	if t.Franja != nil && t.EnviadaARumbo() {
+		slotStart, slotEnd = &t.Franja.Inicio, &t.Franja.Fin
+	}
 	return transferenciaJSON{
 		ID: t.ID, ProductID: t.ProductoID, ProductName: t.NombreProducto, Quantity: t.Cantidad,
 		OriginBranchID: t.OrigenID, OriginBranchName: t.Origen.Nombre,
 		DestinationBranchID: t.DestinoID, DestinationBranchName: t.Destino.Nombre,
 		CreatedBy: t.CreadaPor, CreatedAt: t.CreadaEn, Status: t.Estado,
-		DesiredArrival: t.HoraLlegadaPedida, ToleranceMinutes: t.ToleranciaMinutos, Notes: t.Observaciones,
-		ProposedArrival: t.HoraPropuesta, ProposalExpiresAt: t.VencePropuesta, CommittedArrival: t.HoraComprometida,
-		DelayMinutes: t.DemoraMinutos, Reason: t.Motivo,
-		CancellationRequested: t.CancelacionPorEnviar != nil, ScheduleResponse: t.RespuestaPorEnviar,
-		CancellationRejected: t.CancelacionRechazada, History: history,
+		DesiredArrival: t.HoraLlegadaPedida, Notes: t.Observaciones,
+		SlotStart: slotStart, SlotEnd: slotEnd, DelayMinutes: t.DemoraMinutos, Reason: t.Motivo,
+		CancellationRequested: t.CancelacionPorEnviar != nil, History: history,
 	}
 }

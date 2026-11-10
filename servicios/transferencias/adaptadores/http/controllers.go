@@ -22,16 +22,11 @@ type crearRequest struct {
 	OriginBranchID      uint       `json:"originBranchId" binding:"required"`
 	DestinationBranchID uint       `json:"destinationBranchId" binding:"required"`
 	DesiredArrival      *time.Time `json:"desiredArrival"`
-	ToleranceMinutes    int        `json:"toleranceMinutes"`
 	Notes               string     `json:"notes"`
 }
 
 type cancelarRequest struct {
 	Reason string `json:"reason" binding:"required"`
-}
-
-type responderRequest struct {
-	Accept *bool `json:"accept" binding:"required"`
 }
 
 type Controllers struct {
@@ -71,7 +66,7 @@ func (c *Controllers) Crear(ctx *gin.Context) {
 
 	t, err := c.Servicio.Crear(aplicacion.Pedido{
 		ProductoID: req.ProductID, Cantidad: req.Quantity, OrigenID: req.OriginBranchID, DestinoID: req.DestinationBranchID,
-		HoraLlegada: req.DesiredArrival, ToleranciaMinutos: req.ToleranceMinutes, Observaciones: req.Notes,
+		HoraLlegada: req.DesiredArrival, Observaciones: req.Notes,
 	}, usuario(ctx), trackID)
 	if err != nil {
 		c.responderError(ctx, trackID, "crear transferencia", err)
@@ -135,7 +130,7 @@ func (c *Controllers) Obtener(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, aJSON(t))
 }
 
-// Cancelar responde POST /api/transfers/:transferId/cancel. Si Rumbo ya tenía el pedido, la cancelación
+// Cancelar responde POST /api/transfers/:transferId/cancel. Si Rumbo ya reservó el traslado, la cancelación
 // se le manda en segundo plano y el estado cambia cuando Rumbo responde.
 func (c *Controllers) Cancelar(ctx *gin.Context) {
 	trackID := ctx.GetString("track_id")
@@ -153,28 +148,11 @@ func (c *Controllers) Cancelar(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, aJSON(t))
 }
 
-// Responder responde POST /api/transfers/:transferId/schedule-response con {"accept": true|false}.
-func (c *Controllers) Responder(ctx *gin.Context) {
-	trackID := ctx.GetString("track_id")
-	var req responderRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, errorJSON("INVALID_REQUEST", "Es obligatorio accept, true o false."))
-		return
-	}
-	t, err := c.Servicio.Responder(ctx.Param("transferId"), usuario(ctx), *req.Accept)
-	if err != nil {
-		c.responderError(ctx, trackID, "responder horario", err)
-		return
-	}
-	c.Registro.Escribir(trackID, "info", fmt.Sprintf("respuesta al horario propuesto de la transferencia %s: acepta=%t", t.ID, *req.Accept))
-	ctx.JSON(http.StatusOK, aJSON(t))
-}
-
 // responderError traduce los errores del centro a la respuesta HTTP.
 func (c *Controllers) responderError(ctx *gin.Context, trackID, accion string, err error) {
 	switch {
 	case errors.Is(err, dominio.ErrCantidadInvalida), errors.Is(err, dominio.ErrMismaSucursal),
-		errors.Is(err, dominio.ErrHoraPasada), errors.Is(err, dominio.ErrToleranciaMala):
+		errors.Is(err, dominio.ErrHoraPasada), errors.Is(err, dominio.ErrHoraLejana):
 		ctx.JSON(http.StatusBadRequest, errorJSON("INVALID_REQUEST", capitalizar(err.Error())))
 	case errors.Is(err, aplicacion.ErrSinPermiso):
 		c.Registro.Escribir(trackID, "warn", accion+" rechazado: "+err.Error())
@@ -187,10 +165,6 @@ func (c *Controllers) responderError(ctx *gin.Context, trackID, accion string, e
 		ctx.JSON(http.StatusNotFound, errorJSON("PRODUCT_NOT_FOUND", "No existe ese producto."))
 	case errors.Is(err, dominio.ErrNoCancelable):
 		ctx.JSON(http.StatusConflict, errorJSON("NOT_CANCELLABLE", "La transferencia ya no se puede cancelar: está en curso, terminó o ya se pidió la cancelación."))
-	case errors.Is(err, dominio.ErrNoHayPropuesta):
-		ctx.JSON(http.StatusConflict, errorJSON("NO_PROPOSAL", "La transferencia no tiene un horario propuesto para responder."))
-	case errors.Is(err, dominio.ErrPropuestaVencida):
-		ctx.JSON(http.StatusConflict, errorJSON("PROPOSAL_EXPIRED", "El plazo para responder el horario propuesto ya venció."))
 	case errors.Is(err, aplicacion.ErrNoDisponible):
 		c.Registro.Escribir(trackID, "error", accion+": "+err.Error())
 		ctx.JSON(http.StatusServiceUnavailable, errorJSON("SERVICE_UNAVAILABLE", "No se pudo crear la transferencia porque Sucursales o Inventario no respondió. Probá de nuevo en unos minutos."))

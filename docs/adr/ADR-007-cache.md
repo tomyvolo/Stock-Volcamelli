@@ -11,7 +11,7 @@ El stock no cumple eso: cambia con cada reserva, cada traslado y cada ajuste, y 
 Los datos de las sucursales y la lista de usuarios de cada una sí lo cumplen:
 
 - **Sucursales** (nombre y dirección). Casi nunca cambian: solo cuando se abre una sucursal o se muda. Y se leen todo el tiempo: todas las pantallas tienen un selector de sucursal, la sección de sucursales las muestra, y Transferencias pide las dos sucursales (origen y destino) en cada transferencia que crea, porque Rumbo necesita sus direcciones.
-- **Usuarios de cada sucursal** (nombre, email y rol). Cambian solo cuando entra o se va alguien, o cuando cambia de rol o de sucursal. Y como cualquier usuario puede ver los usuarios de todas las sucursales, la sección se consulta seguido.
+- **La lista de usuarios de la empresa** (nombre, email, rol y sucursal). Cambia solo cuando entra o se va alguien, o cuando alguien cambia de rol o de sucursal. Y como cualquier usuario puede ver a todos los demás, el panel de usuarios se consulta seguido.
 
 ## Decisión
 
@@ -22,11 +22,11 @@ Usamos Memcached, con el patrón cache-aside: el servicio busca primero en la ca
 |---|---|---|---|
 | Sucursales | Una sucursal (`GET /api/branches/{id}`), la usan Transferencias y el frontend | `SUCURSAL:{id}` | 60 segundos |
 | Sucursales | Todas las sucursales (`GET /api/branches`) | `SUCURSALES` | 60 segundos |
-| Usuarios | Usuarios de una sucursal (`GET /api/users?branchId={id}`) | `USUARIOS_SUCURSAL:{id}` | 60 segundos |
+| Usuarios | Todos los usuarios (`GET /api/users`), también filtrados por sucursal (`?branchId={id}`) | `USUARIOS` | 60 segundos |
 
-Las claves llevan el tipo de dato además del id, así no se pisan entre sí. El valor se guarda como JSON.
+Las claves llevan el tipo de dato además del id, así no se pisan entre sí. El valor se guarda como JSON. El filtro de usuarios por sucursal se hace sobre la lista completa que quedó en la caché, así que no necesita una clave propia.
 
-De los usuarios guardamos solo id, nombre, email y rol. La contraseña (ni siquiera su hash) nunca entra en la caché.
+De los usuarios guardamos solo id, nombre, email, rol y sucursal. La contraseña (ni siquiera su hash) nunca entra en la caché.
 
 Cuando un dato cambia, no borramos la clave: la caché sigue mostrando el dato viejo hasta que vence. Así, una sucursal que se mudó o un vendedor nuevo tardan como mucho 60 segundos en aparecer.
 
@@ -49,7 +49,9 @@ Usuarios y Sucursales exponen en `/metrics` contadores de:
 
 El porcentaje de aciertos lo calcula Grafana con esos contadores, y el tiempo de respuesta de cada consulta (promedio y p95) sale del histograma `request_duration_seconds` de esa ruta ([ADR-011](ADR-011-observabilidad.md)).
 
-Para comparar, corremos la misma prueba de carga dos veces, una con `CACHE_ENABLED=false` y otra con la caché prendida: usuarios abriendo la sección de sucursales y creando transferencias al mismo tiempo. Esperamos que con caché baje el tiempo de esas consultas y que los MySQL de Usuarios y Sucursales reciban muchas menos. Los resultados van al ADR de D13.
+Para comparar, corremos la misma prueba de carga dos veces, una con `CACHE_ENABLED=false` y otra con la caché prendida: usuarios abriendo la sección de sucursales y el panel de usuarios, y creando transferencias al mismo tiempo. Esperamos que con caché baje el tiempo de esas consultas y que los MySQL de Usuarios y Sucursales reciban muchas menos.
+
+Lo medimos el 10/11/2026 ([ADR-013](ADR-013-capacidad-y-costos.md)): con caché, esos MySQL recibieron más del 99 % menos de consultas (de entre 1.100 y 1.600 a unas 10 por corrida de 20 segundos). En las listas el p95 bajó a menos de la mitad: de 1107 a 416 ms con todas las sucursales y de 583 a 320 ms con los usuarios de una sucursal. Con una sucursal por id casi no cambió, porque esa consulta ya es muy rápida en MySQL.
 
 ## Alternativas que descartamos
 - **Cachear el stock de cada sucursal.** Es la consulta más pesada, pero el stock cambia con cada reserva, traslado y ajuste, así que la caché mostraría un disponible viejo casi siempre.

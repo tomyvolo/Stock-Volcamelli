@@ -15,6 +15,7 @@ var (
 	ErrSinStock         = errors.New("no hay stock disponible suficiente")
 	ErrNoDisponible     = errors.New("el servicio no respondió a tiempo o no está disponible")
 	ErrRechazoDelPedido = errors.New("el transporte rechazó el pedido")
+	ErrSinLugar         = errors.New("la franja ya no tiene lugar")
 	ErrEstadoNoPermite  = errors.New("el estado del traslado no permite la operación")
 )
 
@@ -33,17 +34,19 @@ type Sucursales interface {
 	Obtener(sucursalID uint, trackID string) (dominio.Ubicacion, error)
 }
 
-// Transporte pide y sigue los traslados. Lo llamamos Transporte y no Rumbo a propósito: si cambiara
+// Transporte reserva y sigue los traslados. Lo llamamos Transporte y no Rumbo a propósito: si cambiara
 // el proveedor, se escribe otro adaptador y el centro queda igual. Cada operación devuelve lo que
 // informó el transporte, ya traducido a una Novedad.
 type Transporte interface {
-	// Solicitar devuelve ErrRechazoDelPedido (con el motivo en la novedad) si el pedido es inválido para
-	// el transporte, o ErrNoDisponible si hay que reintentar más tarde.
-	Solicitar(t *dominio.Transferencia) (dominio.Novedad, error)
+	// Franjas devuelve, en orden, las franjas del día de fecha que todavía tienen lugar.
+	Franjas(fecha time.Time) ([]dominio.Franja, error)
+	// Reservar reserva el traslado en t.Franja. Devuelve ErrSinLugar si la franja ya no tiene lugar o
+	// ya es tarde para reservarla (hay que elegir otra), ErrRechazoDelPedido (con el motivo en la novedad)
+	// si el pedido es inválido, o ErrNoDisponible si hay que reintentar con la misma franja.
+	Reservar(t *dominio.Transferencia) (dominio.Novedad, error)
 	// Cambios devuelve lo que cambió desde la fecha indicada y la fecha hasta la que leyó.
 	Cambios(desde time.Time) ([]dominio.Novedad, time.Time, error)
 	Consultar(t *dominio.Transferencia) (dominio.Novedad, error)
-	ResponderPropuesta(t *dominio.Transferencia, acepta bool) (dominio.Novedad, error)
 	// Cancelar devuelve ErrEstadoNoPermite si el traslado ya está en curso o terminó.
 	Cancelar(t *dominio.Transferencia, motivo string) (dominio.Novedad, error)
 }
@@ -54,8 +57,8 @@ type Repositorio interface {
 	// Obtener devuelve ErrNoExiste si no hay una transferencia con ese id.
 	Obtener(id string) (*dominio.Transferencia, error)
 	Listar(filtro Filtro) ([]*dominio.Transferencia, int64, error)
-	// PendientesDeEnvio son las que hay que mandarle al transporte: sin enviar, con una respuesta
-	// o una cancelación por mandar, o con una reserva por liberar.
+	// PendientesDeEnvio son las que hay que mandarle al transporte: sin reservar, con una cancelación
+	// por mandar, o con una reserva por liberar.
 	PendientesDeEnvio() ([]*dominio.Transferencia, error)
 	// UltimaConsulta es hasta dónde leímos los cambios del transporte.
 	UltimaConsulta() (time.Time, error)

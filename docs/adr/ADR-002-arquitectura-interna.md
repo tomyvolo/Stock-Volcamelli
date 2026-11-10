@@ -32,9 +32,9 @@ Inventario suma una pieza que se ubica igual que los controllers, porque es otra
 servicios/inventario/
 ├── main.go         → arranque: arma repositorios, services y controllers
 ├── controllers/    → HTTP, una carpeta por entidad (products, stock, adjustments)
-├── consumers/      → consumidor de RabbitMQ
+├── messaging/      → RabbitMQ: el consumidor de los eventos de Transferencias y la publicación de los de Inventario
 ├── services/       → reglas de negocio
-├── repositories/   → MySQL, Solr y la publicación en RabbitMQ, cada uno con su interfaz y su mock
+├── repositories/   → MySQL y Solr, cada uno con su interfaz y su mock
 ├── models/         → structs de productos, stock, reservas y movimientos
 ├── database/       → conexión a MySQL
 ├── logs/           → escribe los logs en la tabla app_logs
@@ -45,10 +45,10 @@ servicios/inventario/
 
 En services, repositories y models también hay una carpeta por entidad. Cada servicio es un módulo de Go aparte, con su `go.mod` y su `Dockerfile`.
 
-Usuarios y Sucursales tienen la misma estructura, sin la carpeta de consumers. En los dos, Memcached se usa desde la capa de repositories: el repositorio con caché implementa la misma interfaz que el de MySQL y lo tiene adentro, así busca primero en la caché y, si no está, le pide el dato al de MySQL ([ADR-007](ADR-007-cache.md)).
+Usuarios y Sucursales tienen la misma estructura, sin la carpeta de messaging. En los dos, Memcached se usa desde la capa de repositories: el repositorio con caché implementa la misma interfaz que el de MySQL y lo tiene adentro, así busca primero en la caché y, si no está, le pide el dato al de MySQL ([ADR-007](ADR-007-cache.md)).
 
 ### Hexagonal: Transferencias
-En el centro está lo que es propio de la transferencia: sus estados, qué cambios de estado se permiten (por ejemplo, una transferencia `EN_CURSO` ya no se puede cancelar, y una `COMPLETADA` no cambia más) y los casos de uso, como crear una transferencia, responder un horario propuesto, cancelar o procesar los cambios que informa Rumbo. El centro no conoce Gin, ni el driver de MongoDB, ni el formato de Rumbo.
+En el centro está lo que es propio de la transferencia: sus estados, qué cambios de estado se permiten (por ejemplo, una transferencia `EN_CURSO` ya no se puede cancelar, y una `COMPLETADA` no cambia más) y los casos de uso, como crear una transferencia, cancelarla o procesar los cambios que informa Rumbo. El centro no conoce Gin, ni el driver de MongoDB, ni el formato de Rumbo.
 
 Lo que el centro necesita de afuera lo pide mediante **puertos**, que son interfaces definidas por el propio centro:
 
@@ -56,7 +56,7 @@ Lo que el centro necesita de afuera lo pide mediante **puertos**, que son interf
 |---|---|
 | Inventario | Reservar y liberar unidades |
 | Sucursales | Traer nombre y dirección |
-| Transporte | Pedir un traslado, consultar qué cambió, responder un horario propuesto y cancelar |
+| Transporte | Ver qué franjas tienen lugar, reservar un traslado, consultar qué cambió y cancelar |
 | Repositorio | Guardar y buscar transferencias |
 | Eventos | Publicar los eventos |
 
@@ -77,7 +77,8 @@ servicios/transferencias/
     ├── sucursales/
     ├── rumbo/
     ├── mongo/
-    └── rabbitmq/
+    ├── rabbitmq/
+    └── registro/     → los logs, en el MySQL de logs
 ```
 
 ### Gateway
@@ -92,5 +93,5 @@ Tampoco siguen estos estilos. No tienen base ni reglas de negocio: el Asistente 
 ## Consecuencias
 - En Inventario, tanto los pedidos HTTP como los eventos de RabbitMQ pasan por la misma capa de servicios. Así, las reglas (no reservar más de lo disponible, no liberar una reserva confirmada) se aplican igual sin importar por dónde entre la operación.
 - Hay dos formas de organizar el código en el mismo repositorio, y todo el equipo tiene que conocer las dos.
-- Transferencias tiene más archivos e interfaces que los demás. A cambio, el centro se prueba con adaptadores falsos, por ejemplo un Rumbo falso que acepta o rechaza, sin red ni base.
+- Transferencias tiene más archivos e interfaces que los demás. A cambio, el centro se prueba con adaptadores falsos, por ejemplo un transporte falso que reserva o dice que no hay lugar, sin red ni base.
 - Que nadie se saltee capas (un controller que use un repositorio directo, por ejemplo) no lo controla el compilador: lo revisamos entre nosotros antes de subir los cambios.
