@@ -21,21 +21,21 @@ type documento struct {
 	CreadaEn             time.Time        `bson:"creada_en"`
 	TrackID              string           `bson:"track_id"`
 	HoraLlegadaPedida    *time.Time       `bson:"hora_llegada_pedida"`
-	ToleranciaMinutos    int              `bson:"tolerancia_minutos"`
 	Observaciones        string           `bson:"observaciones"`
 	Estado               string           `bson:"estado"`
 	Historial            []cambioDeEstado `bson:"historial"`
 	IDRumbo              string           `bson:"id_rumbo"`
-	HoraPropuesta        *time.Time       `bson:"hora_propuesta"`
-	VencePropuesta       *time.Time       `bson:"vence_propuesta"`
-	HoraComprometida     *time.Time       `bson:"hora_comprometida"`
+	Franja               *franja          `bson:"franja"`
 	DemoraMinutos        int              `bson:"demora_minutos"`
 	Motivo               string           `bson:"motivo"`
 	ActualizadoEnRumbo   *time.Time       `bson:"actualizado_en_rumbo"`
-	RespuestaPorEnviar   *bool            `bson:"respuesta_por_enviar"`
 	CancelacionPorEnviar *string          `bson:"cancelacion_por_enviar"`
 	LiberacionPorEnviar  bool             `bson:"liberacion_por_enviar"`
-	CancelacionRechazada bool             `bson:"cancelacion_rechazada"`
+}
+
+type franja struct {
+	Inicio time.Time `bson:"inicio"`
+	Fin    time.Time `bson:"fin"`
 }
 
 type ubicacion struct {
@@ -54,19 +54,21 @@ func aDocumento(t *dominio.Transferencia) documento {
 	for _, cambio := range t.Historial {
 		historial = append(historial, cambioDeEstado{Estado: string(cambio.Estado), Fecha: cambio.Fecha, Detalle: cambio.Detalle})
 	}
+	var f *franja
+	if t.Franja != nil {
+		f = &franja{Inicio: t.Franja.Inicio, Fin: t.Franja.Fin}
+	}
 	return documento{
 		ID: t.ID, ProductoID: t.ProductoID, NombreProducto: t.NombreProducto, Cantidad: t.Cantidad,
 		OrigenID: t.OrigenID, DestinoID: t.DestinoID,
 		Origen:    ubicacion{Nombre: t.Origen.Nombre, Direccion: t.Origen.Direccion},
 		Destino:   ubicacion{Nombre: t.Destino.Nombre, Direccion: t.Destino.Direccion},
 		CreadaPor: t.CreadaPor, CreadaEn: t.CreadaEn, TrackID: t.TrackID,
-		HoraLlegadaPedida: t.HoraLlegadaPedida, ToleranciaMinutos: t.ToleranciaMinutos, Observaciones: t.Observaciones,
+		HoraLlegadaPedida: t.HoraLlegadaPedida, Observaciones: t.Observaciones,
 		Estado: string(t.Estado), Historial: historial,
-		IDRumbo: t.IDRumbo, HoraPropuesta: t.HoraPropuesta, VencePropuesta: t.VencePropuesta,
-		HoraComprometida: t.HoraComprometida, DemoraMinutos: t.DemoraMinutos, Motivo: t.Motivo,
-		ActualizadoEnRumbo: t.ActualizadoEnRumbo, RespuestaPorEnviar: t.RespuestaPorEnviar,
-		CancelacionPorEnviar: t.CancelacionPorEnviar, LiberacionPorEnviar: t.LiberacionPorEnviar,
-		CancelacionRechazada: t.CancelacionRechazada,
+		IDRumbo: t.IDRumbo, Franja: f, DemoraMinutos: t.DemoraMinutos, Motivo: t.Motivo,
+		ActualizadoEnRumbo: t.ActualizadoEnRumbo, CancelacionPorEnviar: t.CancelacionPorEnviar,
+		LiberacionPorEnviar: t.LiberacionPorEnviar,
 	}
 }
 
@@ -75,18 +77,20 @@ func (d documento) aDominio() *dominio.Transferencia {
 	for _, cambio := range d.Historial {
 		historial = append(historial, dominio.CambioDeEstado{Estado: dominio.Estado(cambio.Estado), Fecha: cambio.Fecha, Detalle: cambio.Detalle})
 	}
+	var f *dominio.Franja
+	if d.Franja != nil {
+		f = &dominio.Franja{Inicio: d.Franja.Inicio, Fin: d.Franja.Fin}
+	}
 	return &dominio.Transferencia{
 		ID: d.ID, ProductoID: d.ProductoID, NombreProducto: d.NombreProducto, Cantidad: d.Cantidad,
 		OrigenID: d.OrigenID, DestinoID: d.DestinoID,
 		Origen:    dominio.Ubicacion{Nombre: d.Origen.Nombre, Direccion: d.Origen.Direccion},
 		Destino:   dominio.Ubicacion{Nombre: d.Destino.Nombre, Direccion: d.Destino.Direccion},
 		CreadaPor: d.CreadaPor, CreadaEn: d.CreadaEn, TrackID: d.TrackID,
-		HoraLlegadaPedida: d.HoraLlegadaPedida, ToleranciaMinutos: d.ToleranciaMinutos, Observaciones: d.Observaciones,
+		HoraLlegadaPedida: d.HoraLlegadaPedida, Observaciones: d.Observaciones,
 		Estado: dominio.Estado(d.Estado), Historial: historial,
-		IDRumbo: d.IDRumbo, HoraPropuesta: d.HoraPropuesta, VencePropuesta: d.VencePropuesta,
-		HoraComprometida: d.HoraComprometida, DemoraMinutos: d.DemoraMinutos, Motivo: d.Motivo,
-		ActualizadoEnRumbo: d.ActualizadoEnRumbo, RespuestaPorEnviar: d.RespuestaPorEnviar,
-		CancelacionPorEnviar: d.CancelacionPorEnviar, LiberacionPorEnviar: d.LiberacionPorEnviar,
-		CancelacionRechazada: d.CancelacionRechazada,
+		IDRumbo: d.IDRumbo, Franja: f, DemoraMinutos: d.DemoraMinutos, Motivo: d.Motivo,
+		ActualizadoEnRumbo: d.ActualizadoEnRumbo, CancelacionPorEnviar: d.CancelacionPorEnviar,
+		LiberacionPorEnviar: d.LiberacionPorEnviar,
 	}
 }

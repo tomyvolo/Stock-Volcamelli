@@ -21,7 +21,6 @@ services:
       # Inventario se consulta siempre a través de NGINX.
       INVENTARIO_URL: http://nginx
       TIEMPO_REAL_URL: http://tiempo-real:8085
-      ASISTENTE_URL: http://asistente:8087
     depends_on:
       mysql-logs:
         condition: service_healthy
@@ -35,22 +34,11 @@ services:
         condition: service_started
       tiempo-real:
         condition: service_started
-      asistente:
-        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 10s
       timeout: 3s
       retries: 5
-
-  # Frontend: React compilado con Vite y servido por NGINX, que le pasa /api al gateway.
-  frontend:
-    build: ./frontend
-    ports:
-      - "8000:80"
-    depends_on:
-      gateway:
-        condition: service_started
 
   usuarios:
     build: ./servicios/usuarios
@@ -148,47 +136,6 @@ services:
         condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8085/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # Servidor MCP: expone las herramientas del asistente. Cada una llama a la API por el gateway, con el
-  # token del usuario que está chateando (ADR-018).
-  mcp:
-    build: ./servicios/mcp
-    init: true
-    environment:
-      PORT: "8086"
-      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
-      GATEWAY_URL: http://gateway:8080
-    depends_on:
-      mysql-logs:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8086/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # Asistente: le manda la pregunta al modelo y ejecuta las herramientas por MCP. Sin MODEL_API_KEY en el .env
-  # arranca igual y el chat responde que el asistente no está disponible (ADR-018).
-  asistente:
-    build: ./servicios/asistente
-    init: true
-    environment:
-      PORT: "8087"
-      MYSQL_DSN: ${LOGS_DB_USER:?falta LOGS_DB_USER en .env}:${LOGS_DB_PASSWORD:?falta LOGS_DB_PASSWORD en .env}@tcp(mysql-logs:3306)/${LOGS_DB_NAME:?falta LOGS_DB_NAME en .env}?parseTime=true&timeout=2s&readTimeout=2s&writeTimeout=2s
-      MCP_URL: http://mcp:8086/mcp
-      MODEL_URL: ${MODEL_URL:-https://api.groq.com/openai/v1}
-      MODEL_NAME: ${MODEL_NAME:-openai/gpt-oss-120b}
-      MODEL_API_KEY: ${MODEL_API_KEY:-}
-    depends_on:
-      mysql-logs:
-        condition: service_healthy
-      mcp:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8087/health"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -346,12 +293,10 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
     volumes:
       - mongo_transferencias_data:/data/db
-    # mongosh tarda en arrancar: con la máquina cargada pasaba los 3 segundos y Docker marcaba a Mongo
-    # como caído aunque respondía, y Transferencias no arrancaba.
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 10s
+      interval: 5s
+      timeout: 3s
       retries: 20
       start_period: 30s
 

@@ -10,10 +10,13 @@ import (
 )
 
 // Arrancar lanza los dos procesos. envio es cada cuánto se manda lo pendiente; consulta, cada cuánto
-// se le preguntan los cambios a Rumbo (su contrato pide no más de una vez por minuto).
+// se le preguntan los cambios a Rumbo (su contrato pide no más de una vez por minuto). Sin Rumbo
+// configurado, solo corre el envío, que igual libera las reservas de las transferencias fallidas.
 func Arrancar(servicio *aplicacion.Servicio, envio, consulta time.Duration) {
 	go repetir(envio, servicio.EnviarPendientes)
-	go repetir(consulta, servicio.ConsultarCambios)
+	if servicio.Transporte != nil {
+		go repetir(consulta, servicio.ConsultarCambios)
+	}
 }
 
 // repetir corre la tarea cada intervalo. Si una vuelta tarda más que el intervalo, la siguiente

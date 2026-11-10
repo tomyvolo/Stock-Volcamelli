@@ -50,10 +50,6 @@ func main() {
 	if realtimeURL == "" {
 		realtimeURL = "http://localhost:8085"
 	}
-	assistantURL := os.Getenv("ASISTENTE_URL")
-	if assistantURL == "" {
-		assistantURL = "http://localhost:8087"
-	}
 	gatewayProxy := proxy.NewProxy(logStore)
 
 	router.Use(gin.Recovery())
@@ -90,8 +86,8 @@ func main() {
 	// de su sucursal o llegan a ella lo controla Transferencias, porque necesita los datos de la transferencia.
 	allRoles.GET("/transfers", gatewayProxy.Forward("transferencias", transfersURL))
 	allRoles.GET("/transfers/:transferId", gatewayProxy.Forward("transferencias", transfersURL))
-	allRoles.POST("/transfers", gatewayProxy.TransferChange("transferencias", transfersURL))
-	allRoles.POST("/transfers/:transferId/cancel", gatewayProxy.TransferChange("transferencias", transfersURL))
+	allRoles.POST("/transfers", gatewayProxy.Forward("transferencias", transfersURL))
+	allRoles.POST("/transfers/:transferId/cancel", gatewayProxy.Forward("transferencias", transfersURL))
 
 	// Solo el director: alta y cambios de sucursales y productos, y cambiar el rol o la sucursal de un usuario o borrarlo.
 	directorOnly := api.Group("").Use(utils.AuthRequired(), utils.RoleRequired("DIRECTOR"))
@@ -113,13 +109,6 @@ func main() {
 	realtime := router.Group("/api")
 	realtime.Use(observability.AddTrackID, observability.LogRequest(logStore), utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR"))
 	realtime.GET("/events", gatewayProxy.Stream("tiempo-real", realtimeURL))
-
-	// Asistente: una pregunta puede tardar varios segundos, así que tampoco entra en las métricas de latencia.
-	// El Asistente cuenta sus propias respuestas. Es la única ruta que recibe el token del usuario (ADR-018).
-	assistant := router.Group("/api/assistant")
-	assistant.Use(observability.AddTrackID, observability.LogRequest(logStore), utils.AuthRequired(), utils.RoleRequired("DIRECTOR", "ADMIN_SUCURSAL", "VENDEDOR"))
-	assistant.POST("/chat", gatewayProxy.Assistant("asistente", assistantURL))
-	assistant.POST("/confirm", gatewayProxy.Assistant("asistente", assistantURL))
 
 	port := os.Getenv("PORT")
 	if port == "" {

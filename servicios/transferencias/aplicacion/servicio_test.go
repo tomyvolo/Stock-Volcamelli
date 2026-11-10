@@ -11,7 +11,8 @@ import (
 	"transferencias/puertos"
 )
 
-// escenario arma el Servicio con los puertos falsos. El origen (sucursal 1) tiene 10 disponibles del producto 1.
+// escenario arma el Servicio con los puertos falsos. El origen (sucursal 1) tiene 10 disponibles del producto 1,
+// y Rumbo tiene lugar hoy de 14 a 16 y de 16 a 18.
 type escenario struct {
 	servicio   *Servicio
 	repo       *repoFalso
@@ -25,7 +26,7 @@ func nuevoEscenario() *escenario {
 	e := &escenario{
 		repo:       &repoFalso{transferencias: map[string]*dominio.Transferencia{}},
 		inventario: &inventarioFalso{disponible: map[string]int{"1-1": 10}, reservas: map[string]int{}},
-		transporte: &transporteFalso{},
+		transporte: &transporteFalso{franjas: map[string][]dominio.Franja{"2026-11-02": {franja(2, 14), franja(2, 16)}}},
 		eventos:    &eventosFalsos{},
 		ahora:      time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC),
 	}
@@ -41,6 +42,12 @@ func nuevoEscenario() *escenario {
 
 func sucursal(id uint) *uint { return &id }
 
+// franja arma la franja de 2 horas que empieza el día dia de noviembre a la hora indicada.
+func franja(dia, hora int) dominio.Franja {
+	inicio := time.Date(2026, 11, dia, hora, 0, 0, 0, time.UTC)
+	return dominio.Franja{Inicio: inicio, Fin: inicio.Add(2 * time.Hour)}
+}
+
 var vendedor1 = Usuario{ID: 3, Rol: "VENDEDOR", SucursalID: sucursal(1)}
 
 func pedido(cantidad int) Pedido {
@@ -53,13 +60,13 @@ func (e *escenario) novedad(t *dominio.Transferencia, estado dominio.Estado) dom
 	return dominio.Novedad{TransferenciaID: t.ID, IDRumbo: "sol-1", Estado: estado, ActualizadoEn: e.ahora}
 }
 
-// creadaYEnviada crea la transferencia de CA-01 y la manda a Rumbo.
+// creadaYEnviada crea la transferencia de CA-01 y la reserva en Rumbo.
 func (e *escenario) creadaYEnviada(t *testing.T, p Pedido) *dominio.Transferencia {
 	transferencia, err := e.servicio.Crear(p, vendedor1, "track-1")
 	if err != nil {
 		t.Fatalf("No se pudo crear la transferencia: %v", err)
 	}
-	e.transporte.respSolicitar = e.novedad(transferencia, dominio.Reservada)
+	e.transporte.respReservar = e.novedad(transferencia, dominio.Programada)
 	e.servicio.EnviarPendientes()
 	return transferencia
 }
@@ -102,9 +109,11 @@ func TestCrear_SinStock(t *testing.T) {
 	}
 }
 
-// CA-03, CA-04 y CA-05: misma sucursal, sucursal inexistente y hora pasada se rechazan sin reservar.
+// CA-03, CA-04 y CA-05: misma sucursal, sucursal inexistente, hora pasada y hora que Rumbo no puede
+// reservar se rechazan sin reservar.
 func TestCrear_PedidosInvalidos(t *testing.T) {
 	ayer := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	enDosMeses := time.Date(2027, 1, 2, 10, 0, 0, 0, time.UTC)
 	casos := []struct {
 		nombre   string
 		cambiar  func(p *Pedido)
@@ -113,6 +122,7 @@ func TestCrear_PedidosInvalidos(t *testing.T) {
 		{"misma sucursal", func(p *Pedido) { p.DestinoID = 1 }, dominio.ErrMismaSucursal},
 		{"sucursal inexistente", func(p *Pedido) { p.DestinoID = 9 }, ErrSucursalInexistente},
 		{"hora pasada", func(p *Pedido) { p.HoraLlegada = &ayer }, dominio.ErrHoraPasada},
+		{"hora a más de 30 días", func(p *Pedido) { p.HoraLlegada = &enDosMeses }, dominio.ErrHoraLejana},
 		{"producto inexistente", func(p *Pedido) { p.ProductoID = 99 }, ErrProductoInexistente},
 	}
 	for _, caso := range casos {
@@ -164,13 +174,105 @@ func TestCrear_InventarioNoResponde(t *testing.T) {
 	}
 }
 
-func TestEnviarPendientes_MandaARumbo(t *testing.T) {
+// CA-06: sin hora pedida, se reserva la primera franja con lugar y queda PROGRAMADA.
+func TestEnviarPendientes_ReservaLaPrimeraFranja(t *testing.T) {
 	e := nuevoEscenario()
 
 	transferencia := e.creadaYEnviada(t, pedido(4))
 
-	if transferencia.IDRumbo != "sol-1" || transferencia.Estado != dominio.Reservada {
-		t.Errorf("Se esperaba RESERVADA con el id de Rumbo, pero quedó: %+v", transferencia)
+	if transferencia.Estado != dominio.Programada || transferencia.IDRumbo != "sol-1" {
+		t.Fatalf("Se esperaba PROGRAMADA con el id de Rumbo, pero quedó: %+v", transferencia)
+	}
+	if *transferencia.Franja != franja(2, 14) || e.inventario.disponible["1-1"] != 6 {
+		t.Errorf("Se esperaba la franja de 14 a 16 con las 4 unidades reservadas, pero quedó %+v con %d", transferencia.Franja, e.inventario.disponible["1-1"])
+	}
+}
+
+// Con hora pedida, se reserva la franja que la contiene.
+func TestEnviarPendientes_FranjaDeLaHoraPedida(t *testing.T) {
+	e := nuevoEscenario()
+	alas17 := time.Date(2026, 11, 2, 17, 0, 0, 0, time.UTC)
+	p := pedido(4)
+	p.HoraLlegada = &alas17
+
+	transferencia := e.creadaYEnviada(t, p)
+
+	if transferencia.Estado != dominio.Programada || *transferencia.Franja != franja(2, 16) {
+		t.Errorf("Se esperaba PROGRAMADA de 16 a 18, pero quedó %s con %+v", transferencia.Estado, transferencia.Franja)
+	}
+}
+
+// CA-07: si la franja de la hora pedida se llena antes de reservarla, se reserva la siguiente con lugar.
+func TestEnviarPendientes_FranjaLlena(t *testing.T) {
+	e := nuevoEscenario()
+	alas15 := time.Date(2026, 11, 2, 15, 0, 0, 0, time.UTC)
+	p := pedido(4)
+	p.HoraLlegada = &alas15
+	transferencia, _ := e.servicio.Crear(p, vendedor1, "track-1")
+	e.transporte.errReservar = []error{puertos.ErrSinLugar}
+
+	e.servicio.EnviarPendientes()
+
+	if transferencia.Estado != dominio.Reservada || transferencia.Franja != nil {
+		t.Fatalf("Se esperaba RESERVADA y sin franja para buscar otra, pero quedó: %+v", transferencia)
+	}
+
+	// Otro grupo tomó el último lugar: la disponibilidad ya no muestra la franja de 14 a 16.
+	e.transporte.franjas["2026-11-02"] = []dominio.Franja{franja(2, 16)}
+	e.transporte.respReservar = e.novedad(transferencia, dominio.Programada)
+	e.servicio.EnviarPendientes()
+
+	if transferencia.Estado != dominio.Programada || *transferencia.Franja != franja(2, 16) {
+		t.Errorf("Se esperaba PROGRAMADA de 16 a 18, pero quedó %s con %+v", transferencia.Estado, transferencia.Franja)
+	}
+}
+
+// Si el día no tiene lugar, se busca en los días siguientes.
+func TestEnviarPendientes_BuscaEnLosDiasSiguientes(t *testing.T) {
+	e := nuevoEscenario()
+	e.transporte.franjas = map[string][]dominio.Franja{"2026-11-04": {franja(4, 8)}}
+
+	transferencia := e.creadaYEnviada(t, pedido(4))
+
+	if transferencia.Estado != dominio.Programada || *transferencia.Franja != franja(4, 8) {
+		t.Errorf("Se esperaba PROGRAMADA el 4/11 de 8 a 10, pero quedó %s con %+v", transferencia.Estado, transferencia.Franja)
+	}
+}
+
+// CA-09: si Rumbo no tiene lugar en 30 días, queda RECHAZADA y se libera la reserva.
+func TestEnviarPendientes_SinLugarEn30Dias(t *testing.T) {
+	e := nuevoEscenario()
+	e.transporte.franjas = nil
+	transferencia, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
+
+	e.servicio.EnviarPendientes()
+
+	if transferencia.Estado != dominio.Rechazada || !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCancelado) {
+		t.Errorf("Se esperaba RECHAZADA con TrasladoCancelado, pero quedó %s: %v", transferencia.Estado, e.eventos.tipos(transferencia.ID))
+	}
+	if e.transporte.diasConsultados != dominio.DiasReservables+1 || len(e.transporte.reservadas) != 0 {
+		t.Errorf("Se esperaba consultar %d días sin reservar nada, pero consultó %d y reservó %v",
+			dominio.DiasReservables+1, e.transporte.diasConsultados, e.transporte.reservadas)
+	}
+}
+
+// Si Rumbo no responde, el reintento va a la misma franja (y por eso con la misma clave): no reserva dos veces.
+func TestEnviarPendientes_ReintentaLaMismaFranja(t *testing.T) {
+	e := nuevoEscenario()
+	transferencia, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
+	e.transporte.errReservar = []error{puertos.ErrNoDisponible}
+
+	e.servicio.EnviarPendientes()
+	// Mientras tanto la disponibilidad cambió, pero el reintento no la vuelve a consultar.
+	e.transporte.franjas["2026-11-02"] = []dominio.Franja{franja(2, 16)}
+	e.transporte.respReservar = e.novedad(transferencia, dominio.Programada)
+	e.servicio.EnviarPendientes()
+
+	if len(e.transporte.reservadas) != 2 || e.transporte.reservadas[0] != e.transporte.reservadas[1] {
+		t.Errorf("Se esperaba reintentar la misma franja, pero se pidió: %v", e.transporte.reservadas)
+	}
+	if transferencia.Estado != dominio.Programada {
+		t.Errorf("Se esperaba PROGRAMADA, pero quedó %s", transferencia.Estado)
 	}
 }
 
@@ -178,27 +280,30 @@ func TestEnviarPendientes_MandaARumbo(t *testing.T) {
 func TestEnviarPendientes_RumboRechazaElPedido(t *testing.T) {
 	e := nuevoEscenario()
 	transferencia, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
-	e.transporte.respSolicitar = dominio.Novedad{Motivo: "Lo solicitado excede la capacidad de la flota"}
-	e.transporte.errSolicitar = puertos.ErrRechazoDelPedido
+	e.transporte.errReservar = []error{puertos.ErrRechazoDelPedido}
+	e.transporte.motivoRechazo = "Rumbo rechazó el pedido: El peso supera el cupo total de una franja"
 
 	e.servicio.EnviarPendientes()
 
-	if transferencia.Estado != dominio.Rechazada || !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCancelado) {
-		t.Errorf("Se esperaba RECHAZADA con TrasladoCancelado, pero quedó %s: %v", transferencia.Estado, e.eventos.tipos(transferencia.ID))
+	if transferencia.Estado != dominio.Rechazada || transferencia.Motivo != e.transporte.motivoRechazo {
+		t.Errorf("Se esperaba RECHAZADA con el motivo de Rumbo, pero quedó: %+v", transferencia)
+	}
+	if !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCancelado) {
+		t.Errorf("Se esperaba TrasladoCancelado, pero se publicó: %v", e.eventos.tipos(transferencia.ID))
 	}
 }
 
-// Si pasan 24 horas sin poder mandarle el pedido a Rumbo, queda RECHAZADA.
+// Si pasan 24 horas sin poder reservar en Rumbo, queda RECHAZADA.
 func TestEnviarPendientes_VenceA24Horas(t *testing.T) {
 	e := nuevoEscenario()
 	transferencia, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
-	e.transporte.errSolicitar = puertos.ErrNoDisponible
+	e.transporte.errSiempre = puertos.ErrNoDisponible
 
 	e.servicio.EnviarPendientes()
 	if transferencia.Estado != dominio.Reservada {
 		t.Fatalf("Antes de las 24 horas tenía que seguir RESERVADA, pero quedó %s", transferencia.Estado)
 	}
-	e.ahora = e.ahora.Add(PlazoParaEnviar)
+	e.ahora = e.ahora.Add(PlazoParaReservar)
 	e.servicio.EnviarPendientes()
 
 	if transferencia.Estado != dominio.Rechazada {
@@ -206,55 +311,16 @@ func TestEnviarPendientes_VenceA24Horas(t *testing.T) {
 	}
 }
 
-// CA-06: sin hora pedida, el horario propuesto se acepta solo y sigue RESERVADA hasta que Rumbo la programa.
-func TestCambios_PropuestaSinHoraPedida(t *testing.T) {
+// Sin Rumbo configurado, la transferencia se crea y queda RESERVADA (así corren las pruebas de carga).
+func TestEnviarPendientes_SinRumbo(t *testing.T) {
 	e := nuevoEscenario()
-	transferencia := e.creadaYEnviada(t, pedido(4))
-	propuesta := e.novedad(transferencia, dominio.Reservada)
-	propuesta.Contrapropuesta = true
-	e.transporte.cambios = []dominio.Novedad{propuesta}
+	e.servicio.Transporte = nil
+	transferencia, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
 
-	e.servicio.ConsultarCambios()
-
-	if transferencia.Estado != dominio.Reservada || transferencia.RespuestaPorEnviar == nil || !*transferencia.RespuestaPorEnviar {
-		t.Fatalf("Se esperaba RESERVADA con la aceptación pendiente, pero quedó: %+v", transferencia)
-	}
-
-	e.transporte.respResponder = e.novedad(transferencia, dominio.Programada)
 	e.servicio.EnviarPendientes()
 
-	if e.transporte.respondido == nil || !*e.transporte.respondido || transferencia.Estado != dominio.Programada {
-		t.Errorf("Se esperaba aceptar solo y quedar PROGRAMADA, pero quedó %s", transferencia.Estado)
-	}
-}
-
-// CA-07: con hora pedida, el horario propuesto espera la respuesta del usuario.
-func TestCambios_PropuestaConHoraPedida(t *testing.T) {
-	e := nuevoEscenario()
-	manana := e.ahora.Add(24 * time.Hour)
-	p := pedido(4)
-	p.HoraLlegada = &manana
-	transferencia := e.creadaYEnviada(t, p)
-	propuesta := e.novedad(transferencia, dominio.Reservada)
-	propuesta.Contrapropuesta = true
-	otraHora, vence := manana.Add(3*time.Hour), e.ahora.Add(24*time.Hour)
-	propuesta.HoraPropuesta, propuesta.VencePropuesta = &otraHora, &vence
-	e.transporte.cambios = []dominio.Novedad{propuesta}
-
-	e.servicio.ConsultarCambios()
-
-	if transferencia.Estado != dominio.EsperandoConfirmacion || transferencia.RespuestaPorEnviar != nil {
-		t.Fatalf("Se esperaba ESPERANDO_CONFIRMACION sin responder, pero quedó: %+v", transferencia)
-	}
-
-	if _, err := e.servicio.Responder(transferencia.ID, vendedor1, true); err != nil {
-		t.Fatalf("No se pudo responder: %v", err)
-	}
-	e.transporte.respResponder = e.novedad(transferencia, dominio.Programada)
-	e.servicio.EnviarPendientes()
-
-	if transferencia.Estado != dominio.Programada {
-		t.Errorf("Se esperaba PROGRAMADA después de aceptar, pero quedó %s", transferencia.Estado)
+	if transferencia.Estado != dominio.Reservada || transferencia.Franja != nil {
+		t.Errorf("Se esperaba RESERVADA sin franja, pero quedó: %+v", transferencia)
 	}
 }
 
@@ -271,18 +337,18 @@ func TestCambios_Completada(t *testing.T) {
 	}
 }
 
-// CA-09: si Rumbo la rechaza queda RECHAZADA con su motivo y se avisa a Inventario para que libere.
-func TestCambios_Rechazada(t *testing.T) {
+// CA-12: si Rumbo informa que el traslado no se hizo, queda NO_REALIZADA con su motivo y se libera la reserva.
+func TestCambios_NoRealizada(t *testing.T) {
 	e := nuevoEscenario()
 	transferencia := e.creadaYEnviada(t, pedido(4))
-	rechazo := e.novedad(transferencia, dominio.Rechazada)
-	rechazo.Motivo = "No hay vehículos con capacidad disponible para esa fecha."
-	e.transporte.cambios = []dominio.Novedad{rechazo}
+	noRealizado := e.novedad(transferencia, dominio.NoRealizada)
+	noRealizado.Motivo = "La sucursal de origen estaba cerrada."
+	e.transporte.cambios = []dominio.Novedad{noRealizado}
 
 	e.servicio.ConsultarCambios()
 
-	if transferencia.Estado != dominio.Rechazada || transferencia.Motivo != rechazo.Motivo {
-		t.Errorf("Se esperaba RECHAZADA con el motivo de Rumbo, pero quedó: %+v", transferencia)
+	if transferencia.Estado != dominio.NoRealizada || transferencia.Motivo != noRealizado.Motivo {
+		t.Errorf("Se esperaba NO_REALIZADA con el motivo de Rumbo, pero quedó: %+v", transferencia)
 	}
 	if !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCancelado) {
 		t.Errorf("Se esperaba TrasladoCancelado, pero se publicó: %v", e.eventos.tipos(transferencia.ID))
@@ -304,8 +370,33 @@ func TestCambios_NoVuelveAtras(t *testing.T) {
 	}
 }
 
-// Si Rumbo todavía no tenía el pedido, la cancelación es inmediata y se libera la reserva.
-func TestCancelar_AntesDeMandarla(t *testing.T) {
+// Si el usuario cancela mientras no sabíamos si Rumbo había reservado, y después aparece el traslado
+// programado, lo cancelamos en Rumbo para liberar el lugar de la franja.
+func TestCambios_TrasladoSuelto(t *testing.T) {
+	e := nuevoEscenario()
+	transferencia, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
+	e.transporte.errReservar = []error{puertos.ErrNoDisponible}
+	e.servicio.EnviarPendientes()
+	e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta")
+	eventos := len(e.eventos.tipos(transferencia.ID))
+
+	suelto := e.novedad(transferencia, dominio.Programada)
+	suelto.IDRumbo = "sol-9"
+	e.transporte.cambios = []dominio.Novedad{suelto}
+	e.servicio.ConsultarCambios()
+	e.transporte.respCancelar = e.novedad(transferencia, dominio.Cancelada)
+	e.servicio.EnviarPendientes()
+
+	if e.transporte.canceladoEn != "sol-9" || transferencia.CancelacionPorEnviar != nil {
+		t.Errorf("Se esperaba cancelar en Rumbo el traslado sol-9, pero se canceló %q", e.transporte.canceladoEn)
+	}
+	if transferencia.Estado != dominio.Cancelada || len(e.eventos.tipos(transferencia.ID)) != eventos {
+		t.Errorf("Se esperaba que siga CANCELADA sin eventos nuevos, pero quedó %s: %v", transferencia.Estado, e.eventos.tipos(transferencia.ID))
+	}
+}
+
+// Si Rumbo todavía no reservó el traslado, la cancelación es inmediata y se libera la reserva.
+func TestCancelar_AntesDeReservar(t *testing.T) {
 	e := nuevoEscenario()
 	transferencia, _ := e.servicio.Crear(pedido(4), vendedor1, "track-1")
 
@@ -323,13 +414,16 @@ func TestCancelar_AntesDeMandarla(t *testing.T) {
 func TestCancelar_Programada(t *testing.T) {
 	e := nuevoEscenario()
 	transferencia := e.creadaYEnviada(t, pedido(4))
-	e.transporte.cambios = []dominio.Novedad{e.novedad(transferencia, dominio.Programada)}
-	e.servicio.ConsultarCambios()
 
 	if _, err := e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta"); err != nil {
 		t.Fatalf("No se pudo cancelar: %v", err)
 	}
-	e.transporte.respCancelar = e.novedad(transferencia, dominio.Cancelada)
+	if transferencia.Estado != dominio.Programada || transferencia.CancelacionPorEnviar == nil {
+		t.Fatalf("Hasta que Rumbo responda tenía que seguir PROGRAMADA con la cancelación pedida, pero quedó: %+v", transferencia)
+	}
+	cancelado := e.novedad(transferencia, dominio.Cancelada)
+	cancelado.Motivo = "Ya no hace falta"
+	e.transporte.respCancelar = cancelado
 	e.servicio.EnviarPendientes()
 
 	if e.transporte.motivoCancelar != "Ya no hace falta" || transferencia.Estado != dominio.Cancelada {
@@ -354,28 +448,17 @@ func TestCancelar_EnCurso(t *testing.T) {
 	}
 }
 
-// Con menos de 24 horas, Rumbo deja la cancelación pendiente; si no la aprueba, vuelve a PROGRAMADA.
-func TestCancelar_PendienteYRechazada(t *testing.T) {
+// Si el camión salió entre que el usuario canceló y se lo mandamos a Rumbo, queda EN_CURSO.
+func TestCancelar_SalioMientrasTanto(t *testing.T) {
 	e := nuevoEscenario()
 	transferencia := e.creadaYEnviada(t, pedido(4))
-	e.transporte.cambios = []dominio.Novedad{e.novedad(transferencia, dominio.Programada)}
-	e.servicio.ConsultarCambios()
 	e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta")
+	e.transporte.errCancelar = puertos.ErrEstadoNoPermite
+	e.transporte.respConsultar = e.novedad(transferencia, dominio.EnCurso)
 
-	pendiente := e.novedad(transferencia, dominio.Programada)
-	pendiente.CancelacionPendiente = true
-	e.transporte.respCancelar = pendiente
 	e.servicio.EnviarPendientes()
-	if transferencia.Estado != dominio.CancelacionPendiente {
-		t.Fatalf("Se esperaba CANCELACION_PENDIENTE, pero quedó %s", transferencia.Estado)
-	}
 
-	noAprobada := e.novedad(transferencia, dominio.Programada)
-	noAprobada.CancelacionRechazada = true
-	e.transporte.cambios = []dominio.Novedad{noAprobada}
-	e.servicio.ConsultarCambios()
-
-	if transferencia.Estado != dominio.Programada || !transferencia.CancelacionRechazada {
-		t.Errorf("Se esperaba PROGRAMADA con la cancelación rechazada, pero quedó: %+v", transferencia)
+	if transferencia.Estado != dominio.EnCurso || transferencia.CancelacionPorEnviar != nil {
+		t.Errorf("Se esperaba EN_CURSO sin la cancelación pendiente, pero quedó: %+v", transferencia)
 	}
 }

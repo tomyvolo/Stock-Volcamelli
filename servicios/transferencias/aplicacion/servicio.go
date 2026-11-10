@@ -32,16 +32,16 @@ type Usuario struct {
 
 // Pedido es lo que carga el usuario para crear una transferencia.
 type Pedido struct {
-	ProductoID        uint
-	Cantidad          int
-	OrigenID          uint
-	DestinoID         uint
-	HoraLlegada       *time.Time
-	ToleranciaMinutos int
-	Observaciones     string
+	ProductoID    uint
+	Cantidad      int
+	OrigenID      uint
+	DestinoID     uint
+	HoraLlegada   *time.Time
+	Observaciones string
 }
 
-// Servicio tiene los casos de uso. Ahora y NuevoID se pueden reemplazar en los tests.
+// Servicio tiene los casos de uso. Ahora y NuevoID se pueden reemplazar en los tests. Transporte puede
+// ser nil: sin Rumbo configurado, las transferencias se crean y quedan RESERVADA (ADR-009).
 type Servicio struct {
 	Repo       puertos.Repositorio
 	Inventario puertos.Inventario
@@ -66,13 +66,13 @@ func puedeOperar(u Usuario, origenID, destinoID uint) bool {
 }
 
 // Crear arma la transferencia, trae los datos de las sucursales y del producto, y reserva en el origen.
-// El usuario ve el resultado enseguida: RESERVADA, SIN_STOCK o FALLIDA. El pedido a Rumbo sale en segundo plano.
+// El usuario ve el resultado enseguida: RESERVADA, SIN_STOCK o FALLIDA. La reserva en Rumbo sale en segundo plano.
 func (s *Servicio) Crear(pedido Pedido, usuario Usuario, trackID string) (*dominio.Transferencia, error) {
 	if !puedeOperar(usuario, pedido.OrigenID, pedido.DestinoID) {
 		return nil, ErrSinPermiso
 	}
 	t, err := dominio.Nueva(s.NuevoID(), pedido.ProductoID, pedido.Cantidad, pedido.OrigenID, pedido.DestinoID, usuario.ID,
-		pedido.HoraLlegada, pedido.ToleranciaMinutos, pedido.Observaciones, s.Ahora())
+		pedido.HoraLlegada, pedido.Observaciones, s.Ahora())
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (s *Servicio) Listar(filtro puertos.Filtro) ([]*dominio.Transferencia, int6
 	return s.Repo.Listar(filtro)
 }
 
-// Cancelar registra el pedido del usuario. Si Rumbo todavía no tenía el pedido, se cancela en el momento
+// Cancelar registra el pedido del usuario. Si Rumbo todavía no reservó el traslado, se cancela en el momento
 // y se libera la reserva; si no, se le manda la cancelación a Rumbo en segundo plano.
 func (s *Servicio) Cancelar(id string, usuario Usuario, motivo string) (*dominio.Transferencia, error) {
 	s.mu.Lock()
@@ -163,26 +163,6 @@ func (s *Servicio) Cancelar(id string, usuario Usuario, motivo string) (*dominio
 	}
 	if canceladaYa {
 		s.publicar(t)
-	}
-	return t, nil
-}
-
-// Responder registra la respuesta del usuario al horario propuesto. Se le manda a Rumbo en segundo plano.
-func (s *Servicio) Responder(id string, usuario Usuario, acepta bool) (*dominio.Transferencia, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, err := s.Obtener(id)
-	if err != nil {
-		return nil, err
-	}
-	if !puedeOperar(usuario, t.OrigenID, t.DestinoID) {
-		return nil, ErrSinPermiso
-	}
-	if err := t.ResponderPropuesta(acepta, s.Ahora()); err != nil {
-		return nil, err
-	}
-	if err := s.Repo.Guardar(t); err != nil {
-		return nil, err
 	}
 	return t, nil
 }

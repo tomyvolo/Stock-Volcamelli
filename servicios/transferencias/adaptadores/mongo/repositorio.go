@@ -98,7 +98,6 @@ func (r *Repositorio) PendientesDeEnvio() ([]*dominio.Transferencia, error) {
 	defer cancel()
 	consulta := bson.M{"$or": bson.A{
 		bson.M{"estado": dominio.Reservada, "id_rumbo": ""},
-		bson.M{"respuesta_por_enviar": bson.M{"$ne": nil}},
 		bson.M{"cancelacion_por_enviar": bson.M{"$ne": nil}},
 		bson.M{"liberacion_por_enviar": true},
 	}}
