@@ -3,7 +3,9 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -33,7 +35,22 @@ func main() {
 	db := database.ConnectDB()
 
 	// Inyección de dependencias: repositorio -> servicio -> controlador.
-	usersRepository := usersRepo.UsersMySQL{DB: db}
+	// Con CACHE_ENABLED=false el service usa directo MySQL, así medimos el mismo código con y sin caché.
+	mysqlRepository := usersRepo.UsersMySQL{DB: db}
+	var usersRepository usersRepo.UsersRepo = mysqlRepository
+	if os.Getenv("CACHE_ENABLED") != "false" {
+		memcachedAddr := os.Getenv("MEMCACHED_ADDR")
+		if memcachedAddr == "" {
+			memcachedAddr = "localhost:11211"
+		}
+		memcachedClient := memcache.New(memcachedAddr)
+		// Si Memcached no responde rápido, preferimos ir a MySQL antes que hacer esperar la consulta.
+		memcachedClient.Timeout = 100 * time.Millisecond
+		usersRepository = usersRepo.UsersMemcached{Client: memcachedClient, NextRepo: mysqlRepository}
+		log.Printf("caché de usuarios en Memcached (%s)", memcachedAddr)
+	} else {
+		log.Print("caché apagada: las consultas van directo a MySQL")
+	}
 	usersService := usersServices.UsersService{Repo: usersRepository}
 	usersController := usersControllers.UsersController{Service: usersService, Logs: logStore}
 
@@ -48,6 +65,10 @@ func main() {
 	api.POST("/auth/login", usersController.Login)
 	// El gateway ya controló el token y que el rol sea DIRECTOR o ADMIN_SUCURSAL.
 	api.POST("/create-users", usersController.Create)
+	api.GET("/users", usersController.List)
+	// El gateway solo deja pasar estas dos con el token de un director.
+	api.PUT("/users/:userId", usersController.Update)
+	api.DELETE("/users/:userId", usersController.Delete)
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -8,6 +8,7 @@ const (
 	CodeInvalidCredentials = "INVALID_CREDENTIALS"
 	CodeForbidden          = "FORBIDDEN"
 	CodeEmailTaken         = "EMAIL_TAKEN"
+	CodeUserNotFound       = "USER_NOT_FOUND"
 	CodeInternal           = "INTERNAL_ERROR"
 )
 
