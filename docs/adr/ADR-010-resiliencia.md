@@ -25,7 +25,10 @@ Ninguna llamada espera para siempre:
 ### Reintentos
 - **Lo que pide el usuario no se reintenta solo.** Si una llamada interna falla mientras el usuario espera, le respondemos el error enseguida. Reintentar ahí solo alarga la espera y suma carga a una pieza que ya está mal.
 - **Las consultas que pasan por NGINX** se reintentan una vez en la otra instancia de Inventario ([ADR-012](ADR-012-balanceo-de-carga.md)).
-- **Los procesos de fondo sí reintentan** con backoff exponencial: hasta 4 intentos, esperando 1 segundo, después 2 y después 4 entre uno y otro. Si los 4 fallan, el proceso lo deja pendiente y lo vuelve a intentar en su próxima vuelta. Son: liberar una reserva después de un timeout y mandarle pedidos y respuestas a Rumbo. Con los mismos 4 intentos se reintenta publicar un evento (si fallan, queda en el log de error para publicarlo a mano), actualizar Solr (si fallan, el mensaje va a la cola de errores) y conectarse a RabbitMQ al arrancar cada servicio. Todos se pueden repetir sin efectos duplicados, porque usan el id de la transferencia o del evento ([ADR-016](ADR-016-comunicacion-entre-servicios.md), [ADR-009](ADR-009-consumo-de-rumbo.md)).
+- **Los procesos de fondo de Transferencias reintentan en su próxima vuelta.** Liberar una reserva después de un timeout y mandarle reservas y cancelaciones a Rumbo no esperan entre un intento y otro: lo que falla queda pendiente y se vuelve a intentar en la vuelta siguiente, a los 10 segundos. No esperamos ahí adentro porque, mientras el proceso trabaja con una transferencia, la tiene tomada, y el usuario que quiere cancelarla tendría que esperar con él.
+- **Publicar un evento, actualizar Solr y conectarse a RabbitMQ** sí reintentan con backoff exponencial: hasta 4 intentos, esperando 1 segundo, después 2 y después 4 entre uno y otro. Si los 4 fallan, el evento queda en el log de error para publicarlo a mano y el mensaje de Solr va a la cola de errores.
+
+Todos se pueden repetir sin efectos duplicados, porque usan el id de la transferencia o del evento ([ADR-016](ADR-016-comunicacion-entre-servicios.md), [ADR-009](ADR-009-consumo-de-rumbo.md)).
 - **Los mensajes de RabbitMQ** que no se pueden procesar se rechazan sin reencolar y van a la cola de errores ([ADR-016](ADR-016-comunicacion-entre-servicios.md)).
 
 ### Circuit breaker con Rumbo
@@ -54,6 +57,8 @@ Los errores de negocio (`422`, `409`) no cuentan como fallas: Rumbo está andand
 | **El MySQL de logs** | Todo | Los logs de ese rato no aparecen en Grafana; quedan solo en la consola de Docker ([ADR-011](ADR-011-observabilidad.md)). Cada log espera como mucho 200 ms, así que los pedidos se demoran un poco pero siguen respondiendo. Lo mismo si en vez de caerse se satura ([ADR-013](ADR-013-capacidad-y-costos.md)) |
 | **NGINX** | Todo lo que no es Inventario | Lo mismo que si se cayeran las dos instancias de Inventario |
 | **Gateway** | Los procesos de fondo (Rumbo y eventos) | Todo lo que viene de afuera: el frontend y el otro grupo |
+
+Si el MySQL de Inventario no está cuando Inventario arranca, o se cae después, Inventario sigue corriendo: verifica la base cada 5 segundos y, mientras no responde, contesta `503` enseguida en lugar de dejar que cada pedido espere su timeout. Cuando la base vuelve, sigue solo, sin reiniciarse. Lo mismo con el MySQL de logs: arranca igual y los logs salen por consola hasta que vuelve. Antes, sin base, Inventario se cerraba al arrancar y quedaba reiniciándose, y en la nube los pedidos del otro grupo se quedaban colgados sin respuesta.
 
 Cuando algo responde `503`, el frontend muestra "no disponible por el momento" solo en esa parte de la pantalla, y el resto sigue andando.
 

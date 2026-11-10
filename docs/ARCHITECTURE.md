@@ -15,7 +15,7 @@ Lo armamos con microservicios. El frontend en React habla únicamente con un API
 
 Cada servicio es dueño de sus datos y nadie lee la base de otro. Los servicios se comunican por HTTP cuando necesitan la respuesta en el momento, y por eventos en RabbitMQ cuando no.
 
-Además nos integramos con otros dos grupos. A uno le ofrecemos consultar nuestro catálogo y stock (sección 8). Del otro usamos Rumbo, su servicio de traslados, en cada transferencia (sección 7).
+Además nos integramos con otros dos grupos. A uno le ofrecemos consultar nuestro catálogo y stock (sección 9). Del otro usamos Rumbo, su servicio de traslados, en cada transferencia (secciones 8 y 9).
 
 Por encima de esto sumamos dos funcionalidades: un asistente en el frontend que opera el sistema conversando, y actualizaciones de las pantallas en tiempo real. Son tres servicios más (Asistente, servidor MCP y Tiempo Real), descriptos en la sección 11.
 
@@ -73,16 +73,16 @@ Guarda los usuarios con su email, contraseña (hasheada), rol y sucursal. Hace e
 |---|---|---|
 | `DIRECTOR` | Ninguna | Todo, en todas las sucursales: transferencias, ajustes, usuarios de cualquier rol, sucursales y productos |
 | `ADMIN_SUCURSAL` | Una | Lo del vendedor, más ajustes de stock en su sucursal y alta de vendedores de su sucursal |
-| `VENDEDOR` | Una | Consulta todo. Crea, cancela y responde los horarios de las transferencias que salen de su sucursal o llegan a ella |
+| `VENDEDOR` | Una | Consulta todo. Crea y cancela las transferencias que salen de su sucursal o llegan a ella |
 
-El alta de usuarios es `POST /api/create-users`, con nombre, email, contraseña, rol y sucursal. El gateway solo la deja pasar con el token de un `DIRECTOR` o un `ADMIN_SUCURSAL`, y Usuarios controla el resto de las reglas: el admin solo crea vendedores de su sucursal, el admin y el vendedor necesitan sucursal y el director y la integración no llevan, y el email no se puede repetir (`409`). La contraseña se guarda hasheada con bcrypt y nunca se devuelve.
+El alta de usuarios es `POST /api/create-users`, con nombre, email, contraseña, rol y sucursal. El gateway solo la deja pasar con el token de un `DIRECTOR` o un `ADMIN_SUCURSAL`, y Usuarios controla el resto de las reglas: el admin solo crea vendedores de su sucursal, el admin y el vendedor necesitan sucursal y el director no lleva, y el email no se puede repetir (`409`). La contraseña se guarda hasheada con bcrypt y nunca se devuelve. Solo el director puede cambiarle el rol o la sucursal a un usuario (`PUT /api/users/{id}`, con rol y sucursal), con las mismas reglas que el alta, o borrarlo (`DELETE /api/users/{id}`). Nadie puede borrarse a sí mismo, así siempre queda un director. Un usuario borrado no puede volver a hacer login, pero el token que ya tenía sigue valiendo hasta que vence, como mucho una hora.
 
-Todos los usuarios pueden ver la lista de usuarios de cada sucursal con su nombre, email y rol (`GET /api/users?branchId=3`). La contraseña nunca sale de Usuarios. Esa lista se guarda en caché ([ADR-007](adr/ADR-007-cache.md)).
+Todos los usuarios pueden ver la lista de usuarios de la empresa con su nombre, email, rol y sucursal (`GET /api/users`), y filtrarla por sucursal (`GET /api/users?branchId=3`). La contraseña nunca sale de Usuarios. Esa lista se guarda en caché ([ADR-007](adr/ADR-007-cache.md)).
 
 ### Sucursales
 Guarda las sucursales con su nombre y dirección. La dirección hace falta porque Rumbo la pide para cada traslado. Los datos de las sucursales se guardan en caché, porque casi nunca cambian y los piden todas las pantallas y Transferencias en cada transferencia ([ADR-007](adr/ADR-007-cache.md)).
 
-El frontend tiene una sección de sucursales que muestra cada una con sus datos y sus usuarios: los datos los trae de Sucursales y los usuarios, de Usuarios.
+El frontend tiene una sección de sucursales con los datos de cada una, que trae de Sucursales, y un panel con todos los usuarios de la empresa y la sucursal de cada uno, que trae de Usuarios.
 
 ### Inventario
 Es el servicio que publicamos. Guarda los productos, el stock de cada producto en cada sucursal y los movimientos (cada cambio de stock queda registrado, con su motivo).
@@ -91,14 +91,16 @@ Del stock guarda dos números: el total y lo reservado. El **disponible** es la 
 
 Tiene tres tipos de operaciones:
 
-- **Consultas** del catálogo y del stock, que usan nuestro frontend y el otro grupo.
-- **Ajustes manuales** de stock, que hace el director o el admin de esa sucursal, por ejemplo cuando llega mercadería o hay una rotura.
-- **Reservas**, que solo usa Transferencias: reservar unidades en el origen, confirmarlas cuando el traslado llega (se mueven al destino) y liberarlas si el traslado se rechaza, se cancela o no se realiza.
+- **Consultas** del catálogo y del stock, que usan nuestro frontend y el otro grupo, y del historial de movimientos de un producto en una sucursal (`GET /api/branches/{id}/products/{id}/movements`). La búsqueda por texto (`GET /api/products/search`) la usa solo nuestro frontend y la resuelve Solr ([ADR-006](adr/ADR-006-busqueda.md)).
+- **Ajustes manuales** de stock (`POST /api/branches/{id}/products/{id}/adjustments`, con tipo `ENTRADA` o `SALIDA`, cantidad y motivo), que hace el director o el admin de esa sucursal, por ejemplo cuando llega mercadería o hay una rotura. El alta y los cambios de productos (`POST /api/products` y `PUT /api/products/{id}`) los hace solo el director.
+- **Reservas**, que solo usa Transferencias: reservar unidades en el origen (`POST /internal/reservations`) y liberar la reserva de una transferencia que quedó `FALLIDA` (`POST /internal/reservations/{transferId}/release`). Las rutas `/internal` no pasan por el gateway: Transferencias las llama directo, por el NGINX de Inventario. Cuando el traslado termina, Inventario se entera por RabbitMQ: con `TrasladoCompletado` confirma la reserva y mueve las unidades al destino, y con `TrasladoCancelado` la libera. Las dos instancias escuchan la misma cola, así que cada evento lo procesa una sola.
 
 El stock nunca puede quedar negativo, y eso lo controlan tanto el código como la base.
 
+En la nube, donde Inventario está publicado solo para el otro grupo, están únicamente las operaciones del contrato: las cuatro consultas y aumentar o reducir el stock, sobre una base que es solo del otro grupo. Ahí no hay gateway que controle los roles, así que el ajuste de nuestro frontend, el alta de productos, las reservas y la búsqueda no existen.
+
 ### Transferencias
-Guarda cada transferencia con su estado y su historial. Es el único servicio que habla con Rumbo: le pide los traslados, sigue cada uno hasta que termina y le reenvía las acciones de los usuarios (responder un horario propuesto o cancelar). El flujo completo está en la sección 7.
+Guarda cada transferencia con su estado y su historial. Es el único servicio que habla con Rumbo: reserva los traslados, sigue cada uno hasta que termina y le reenvía las cancelaciones de los usuarios. El flujo completo está en la sección 8.
 
 ## 5. Arquitectura interna de cada servicio
 
@@ -128,7 +130,7 @@ Las comunicaciones entre servicios son:
 | Transferencias | Inventario | HTTP, por NGINX | Reservar las unidades y, si falló, liberar |
 | Inventario | Sucursales | HTTP | Validar la sucursal en un ajuste |
 | Transferencias | Inventario | Eventos `TrasladoCompletado` y `TrasladoCancelado` (RabbitMQ) | Confirmar o liberar la reserva |
-| Transferencias | Rumbo | HTTP, en segundo plano | Pedir el traslado, seguirlo, responder horarios y cancelar |
+| Transferencias | Rumbo | HTTP, en segundo plano | Reservar el traslado, seguirlo y cancelarlo |
 | Inventario | Su indexador | Evento `ProductoActualizado` (RabbitMQ) | Actualizar Solr |
 | Inventario | Tiempo Real | Evento `StockActualizado` (RabbitMQ) | Actualizar las pantallas |
 | Transferencias | Tiempo Real | Evento `TransferenciaActualizada` (RabbitMQ) | Actualizar las pantallas |
@@ -153,18 +155,15 @@ Si las dos instancias de Inventario están caídas o no responden en 2 segundos,
 
 Cuando un usuario crea la transferencia, las unidades quedan reservadas en el origen. Pasan al destino recién cuando Rumbo informa que el traslado llegó. Si el traslado se rechaza, se cancela o no se realiza, la reserva se libera y el origen vuelve a tenerlas disponibles.
 
-1. El usuario elige producto, cantidad, sucursal de origen y de destino. Si quiere, indica a qué hora quiere que llegue, con cuánta flexibilidad, y observaciones para el retiro o la entrega.
+1. El usuario elige producto, cantidad, sucursal de origen y de destino. Si quiere, indica a qué hora quiere que llegue y observaciones para el retiro o la entrega.
 2. Transferencias le pide a Sucursales el nombre y la dirección de las dos sucursales.
 3. Transferencias le pide a Inventario que reserve las unidades en el origen. Si no hay stock disponible suficiente, Inventario lo rechaza.
 4. El usuario ve el resultado enseguida: la transferencia reservada o el motivo por el que no se pudo.
-5. En segundo plano, Transferencias le pide el traslado a Rumbo.
-6. Cada 60 segundos, Transferencias le consulta a Rumbo qué cambió:
-   - si Rumbo propone otro horario y no se había pedido hora, lo aceptamos solos; si se había pedido una, la transferencia espera a que un usuario acepte o rechace la propuesta;
-   - si Rumbo acepta, la transferencia queda programada con la hora comprometida;
-   - mientras el camión viaja, mostramos que está en curso y, si hay, la demora.
+5. En segundo plano, Transferencias le consulta a Rumbo qué franjas tienen lugar y reserva la que contiene la hora pedida o, si no tiene lugar o no se pidió hora, la primera con lugar. Rumbo responde en el momento y la transferencia queda programada con esa franja.
+6. Cada 60 segundos, Transferencias le consulta a Rumbo qué cambió. Mientras el camión viaja, mostramos que está en curso y, si hay, la demora.
 7. Cuando el traslado llega, Transferencias publica `TrasladoCompletado` e Inventario pasa el stock: resta en el origen y suma en el destino. Si el traslado se rechaza, se cancela o no se realiza, publica `TrasladoCancelado` e Inventario libera la reserva.
 
-Mientras el traslado no esté en curso, se puede cancelar la transferencia. Si falta poco para la llegada, Rumbo tiene que aprobar la cancelación.
+Mientras el traslado no esté en curso, se puede cancelar la transferencia. Rumbo aplica la cancelación en el momento.
 
 Un ejemplo con 4 unidades, de una sucursal con 10 a otra con 2:
 
@@ -181,25 +180,23 @@ Los estados de una transferencia son:
 |---|---|
 | `SIN_STOCK` | El origen no tenía stock disponible suficiente. No se reservó nada |
 | `FALLIDA` | Inventario no respondió a tiempo. Si llegó a reservar, la reserva se libera |
-| `RESERVADA` | Las unidades están reservadas y esperamos que Rumbo revise el pedido |
-| `ESPERANDO_CONFIRMACION` | Se había pedido una hora, Rumbo propuso otra y hay 24 horas para aceptarla o rechazarla |
-| `PROGRAMADA` | Rumbo aceptó y hay una hora de llegada comprometida |
+| `RESERVADA` | Las unidades están reservadas y todavía no reservamos el traslado en Rumbo |
+| `PROGRAMADA` | Rumbo reservó el traslado y hay una franja de llegada comprometida |
 | `EN_CURSO` | El camión está viajando |
 | `COMPLETADA` | El traslado llegó. Inventario pasa el stock al destino al procesar el evento |
-| `RECHAZADA` | Rumbo rechazó el traslado, un usuario rechazó el horario o nadie lo respondió a tiempo. La reserva se liberó |
-| `CANCELACION_PENDIENTE` | Un usuario pidió cancelar con poca anticipación y Rumbo todavía no lo aprobó |
+| `RECHAZADA` | Rumbo no pudo reservar el traslado o no pudimos mandarle el pedido a tiempo. La reserva se liberó |
 | `CANCELADA` | La transferencia se canceló. La reserva se liberó |
 | `NO_REALIZADA` | Rumbo no pudo hacer el traslado o lo interrumpió. La reserva se liberó |
 
 ## 9. Integración con otros grupos
 
-**Lo que ofrecemos.** El otro grupo puede consultar el catálogo y el stock disponible de Inventario: listar productos, ver un producto, el stock de una sucursal y el stock de un producto en una sucursal. Consulta directo a Inventario publicado en la nube, sin pasar por el gateway, con una API key en el header `X-API-Key`. En la nube corre solo Inventario, con su MySQL. El contrato está en [contracts/README.md](contracts/README.md) y la decisión en [ADR-017](adr/ADR-017-contrato-propio.md).
+**Lo que ofrecemos.** El otro grupo puede consultar el catálogo y el stock disponible de Inventario: listar productos, ver un producto, el stock de una sucursal y el stock de un producto en una sucursal. También puede aumentar y reducir el stock de un producto en una sucursal. Llama directo a Inventario publicado en la nube, sin pasar por el gateway, con una API key en el header `X-API-Key`. En la nube corre solo Inventario, con su MySQL: esa base es del otro grupo y lo que cambia ahí no toca el stock de nuestro sistema. El contrato está en [contracts/README.md](contracts/README.md) y la decisión en [ADR-017](adr/ADR-017-contrato-propio.md).
 
 **Lo que usamos.** De Rumbo usamos toda la funcionalidad de su contrato:
 - pedir el token;
-- pedir un traslado, con hora de llegada si el usuario la eligió;
-- consultar qué cambió, tanto de la solicitud como del viaje;
-- responder el horario que proponen;
+- consultar qué franjas tienen lugar;
+- reservar un traslado en una franja;
+- consultar qué cambió en cada viaje;
 - cancelar un traslado.
 
 Solo le habla Transferencias, siempre en segundo plano, así que si Rumbo no responde nadie se queda esperando. Cómo traducimos sus estados y qué hacemos con cada error está en [ADR-009](adr/ADR-009-consumo-de-rumbo.md).
@@ -219,7 +216,7 @@ Prometheus junta las métricas y Grafana las muestra en un tablero junto con los
 Cada falla afecta solo lo que depende de esa pieza. Lo más importante, consultar stock y lo que publicamos, depende solo de Inventario y su MySQL:
 
 - Todas las llamadas tienen timeout, y las de los usuarios no se reintentan solas: si algo falla, lo ve enseguida.
-- Los procesos de fondo reintentan esperando cada vez más, y las operaciones se pueden repetir sin duplicar efectos.
+- Los procesos de fondo reintentan solos (los de Transferencias en su vuelta siguiente; publicar eventos y actualizar Solr, esperando cada vez más), y las operaciones se pueden repetir sin duplicar efectos.
 - Con Rumbo usamos un circuit breaker: después de 5 fallas seguidas dejamos de llamarlo por 30 segundos.
 - Si se cae Memcached, Usuarios y Sucursales leen de MySQL. Si se cae Solr, solo deja de andar la búsqueda. Si se cae Usuarios, los que ya tienen token siguen trabajando.
 
@@ -238,6 +235,7 @@ La tabla completa de qué sigue andando cuando se cae cada pieza está en [ADR-0
 | D1 Límites de los servicios | [ADR-014](adr/ADR-014-limites-de-servicios.md) | [ADR-001](adr/ADR-001-limites-de-servicios.md) |
 | D2 Arquitectura interna | [ADR-002](adr/ADR-002-arquitectura-interna.md) | — |
 | D3 Persistencia | [ADR-015](adr/ADR-015-persistencia.md) | [ADR-003](adr/ADR-003-persistencia-inicial.md) |
+| D4 Consistencia y concurrencia | [ADR-004](adr/ADR-004-consistencia-y-concurrencia.md) | — |
 | D5 Comunicación entre servicios | [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md) | [ADR-005](adr/ADR-005-comunicacion-inicial.md) |
 | D6 Búsqueda | [ADR-006](adr/ADR-006-busqueda.md) | — |
 | D7 Caché | [ADR-007](adr/ADR-007-cache.md) | — |
@@ -249,3 +247,39 @@ La tabla completa de qué sigue andando cuando se cae cada pieza está en [ADR-0
 | D13 Capacidad y costos | [ADR-013](adr/ADR-013-capacidad-y-costos.md) | — |
 | Asistente con MCP | [ADR-018](adr/ADR-018-asistente.md) | — |
 | Actualizaciones en tiempo real | [ADR-019](adr/ADR-019-tiempo-real.md) | — |
+
+## 14. Limitaciones conocidas y deuda técnica
+
+Lo que sabemos que el sistema no resuelve, o resuelve de una forma más simple de lo ideal, y por qué lo aceptamos.
+
+### Del diseño
+| Limitación | Por qué la aceptamos | Qué haríamos si hiciera falta |
+|---|---|---|
+| Transferencias y Tiempo Real corren en una sola instancia | Transferencias hace la consulta de cambios a Rumbo y usa un lock en memoria; Tiempo Real tiene las conexiones abiertas en su memoria. Con dos, habría que coordinarlas | Un lock en MongoDB para los procesos de fondo y repartir las conexiones entre instancias ([ADR-009](adr/ADR-009-consumo-de-rumbo.md), [ADR-019](adr/ADR-019-tiempo-real.md)) |
+| Si RabbitMQ no está al publicar un evento, después de 4 intentos queda en el log de error para publicarlo a mano | No se pierden unidades: quedan reservadas hasta que se publica. Evitarlo pedía una tabla y un proceso más en cada servicio | Guardar el evento junto con el cambio y publicarlo desde ahí (outbox, [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)) |
+| La sucursal y el rol van en el token, que dura 1 hora y no se puede revocar | Evita consultar Usuarios en cada pedido | Tokens más cortos con renovación, o una lista de tokens revocados en Memcached |
+| La caché de Usuarios y Sucursales no se borra cuando un dato cambia | Un cambio tarda como mucho 60 segundos en verse, y los permisos no salen de la caché ([ADR-007](adr/ADR-007-cache.md)) | Borrar la clave al guardar |
+| La búsqueda puede atrasarse hasta 5 segundos, y si un evento de producto se pierde, el producto queda desactualizado hasta que corremos la reconstrucción a mano | Es una búsqueda, no la fuente del stock ([ADR-006](adr/ADR-006-busqueda.md)) | Correr la reconstrucción programada, por ejemplo cada noche |
+| Las pantallas no recuperan los avisos de tiempo real que se perdieron durante una desconexión | Al reconectar recargan los datos, así quedan al día ([ADR-019](adr/ADR-019-tiempo-real.md)) | Numerar los eventos y reenviar los que faltan |
+
+### De la capacidad
+| Limitación | Detalle |
+|---|---|
+| El límite está en la escritura de logs | Con unas 500 consultas por segundo el MySQL de logs llega a su máximo de conexiones. Cada `INSERT` espera como mucho 200 ms, así que el pedido sigue, pero ese log no llega a Grafana ([ADR-013](adr/ADR-013-capacidad-y-costos.md), [ADR-011](adr/ADR-011-observabilidad.md)) |
+| Las pruebas de carga corren en una sola máquina | Los números sirven para comparar entre corridas, no para saber cuánto aguantaría en un servidor real |
+
+### De las dependencias externas
+| Limitación | Detalle |
+|---|---|
+| Rumbo es de otro grupo | Lo mantienen despierto hasta la presentación; después puede dormirse o dejar de estar, y las transferencias nuevas quedarían `RESERVADA` |
+| `EN_CURSO` y `COMPLETADO` los marca a mano un operador de Rumbo | El viaje completo no avanza solo. Para mostrarlo dependemos de que alguien del otro grupo lo marque |
+| El cupo de cada franja de Rumbo lo comparten todos los grupos | Las transferencias de prueba ocupan lugar, así que las cancelamos al terminar |
+| Nos enteramos de los cambios de Rumbo con hasta 60 segundos de atraso | Rumbo no avisa: hay que consultarlo, y su contrato pide no más de una vez por minuto |
+| Inventario publicado corre en los planes gratis de Render y de Aiven | Render se duerme a los 15 minutos sin pedidos y Aiven apaga la base si no tiene actividad. Un cron-job consulta el catálogo cada 10 minutos para mantener los dos despiertos. Si la base se apaga igual, Inventario responde `503` hasta que se prende. Aiven retira el MySQL gratis el 21/12/2026 |
+| El asistente usa el plan gratis de Groq | Tiene un límite de pedidos por minuto y por día. Si se pasa, el chat dice que el asistente no está disponible. El modelo también puede entender mal una pregunta; para crear, está la confirmación ([ADR-018](adr/ADR-018-asistente.md)) |
+
+### Deuda técnica
+- Los procesos de fondo de Transferencias recorren todas las pendientes en cada vuelta. Con muchas transferencias esperando a Rumbo, una vuelta podría tardar más que los 10 segundos entre vueltas.
+- Las alertas se ven en Grafana, pero no avisan por mail ni por Discord ([ADR-011](adr/ADR-011-observabilidad.md)).
+- Los secretos (contraseñas, la clave de Rumbo, la del modelo) van en el `.env` de cada uno. No usamos un gestor de secretos.
+- Localmente todo corre por HTTP, sin HTTPS.

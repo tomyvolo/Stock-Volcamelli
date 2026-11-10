@@ -40,7 +40,7 @@ Los usamos cuando algo tiene que pasar en otro servicio, pero quien lo genera no
 | `ProductoActualizado` | Inventario | Indexador de Inventario | Actualiza el producto en Solr |
 | `StockActualizado` | Inventario | Tiempo Real | Avisa al frontend que cambió el disponible de un producto en una sucursal |
 
-`TrasladoCancelado` lleva el motivo: que Rumbo lo rechazó, que el usuario lo canceló o rechazó el horario propuesto, que el viaje no se realizó o que pasaron 24 horas sin poder mandarle el pedido a Rumbo.
+`TrasladoCancelado` lleva el motivo: que Rumbo no tenía lugar o rechazó el pedido, que el usuario lo canceló, que el viaje no se realizó o que pasaron 24 horas sin poder mandarle el pedido a Rumbo.
 
 - **Publicación.** El servicio guarda el cambio en su base y, apenas lo guardó, publica el evento en RabbitMQ. Si RabbitMQ no responde, reintenta con backoff: espera 1 segundo, después 2 y después 4. Si después del cuarto intento sigue sin poder, escribe un log de error con el TrackID y el evento completo, para publicarlo a mano.
 - **Consumidor idempotente.** Un evento puede llegar más de una vez. Cada evento lleva un id, e Inventario guarda el id de cada evento que procesa, en la misma transacción en la que confirma o libera. Si llega uno repetido, lo ignora. Además, una reserva ya confirmada no se puede liberar ni al revés.
@@ -55,7 +55,7 @@ Transferencias marca la transferencia en su estado final (`COMPLETADA`, `RECHAZA
 Inventario publica `ProductoActualizado` después de cada alta o cambio de un producto, para mantener actualizado el buscador ([ADR-006](ADR-006-busqueda.md)), y `StockActualizado` después de cada transacción que cambia el stock (reservar, confirmar, liberar o ajustar), para avisarle al frontend.
 
 ### Rumbo
-A Rumbo le habla solamente Transferencias, por HTTP. Los pedidos de traslado y la consulta de cambios cada 60 segundos corren en segundo plano, así el usuario nunca espera a Rumbo. Cuando el usuario responde un horario propuesto o cancela una transferencia, Transferencias guarda la acción y se la manda a Rumbo, también en segundo plano.
+A Rumbo le habla solamente Transferencias, por HTTP. La reserva del traslado y la consulta de cambios cada 60 segundos corren en segundo plano, así el usuario nunca espera a Rumbo. Cuando el usuario cancela una transferencia programada, Transferencias guarda la cancelación y se la manda a Rumbo, también en segundo plano.
 
 Cuando el traslado se completa publicamos `TrasladoCompletado`. Si se rechaza, se cancela o no se realiza, publicamos `TrasladoCancelado`. Qué operaciones de Rumbo usamos, cómo traducimos sus estados y qué hacemos con cada error está en [ADR-009](ADR-009-consumo-de-rumbo.md). Los reintentos y el circuit breaker están en [ADR-010](ADR-010-resiliencia.md).
 

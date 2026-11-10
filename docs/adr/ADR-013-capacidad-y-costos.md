@@ -31,7 +31,7 @@ Todas las pruebas entran por el gateway, con un token, igual que un usuario real
 
 Cada escenario sube la carga de a poco (de 10 a 200 workers) hasta que el p95 pasa los 500 ms o aparecen errores. Ese punto es la capacidad máxima.
 
-Rumbo no participa de las pruebas: usamos un Rumbo falso que responde enseguida, porque no queremos cargar el servicio de otro grupo y porque lo que medimos es nuestro sistema.
+Rumbo no participa de las pruebas: levantamos Transferencias sin la URL de Rumbo, así las transferencias quedan `RESERVADA` y no le mandamos nada. No queremos cargar el servicio de otro grupo ni ocupar el cupo de sus franjas, que comparten todos los grupos, y lo que medimos es nuestro sistema: la reserva en Inventario.
 
 ### Qué registramos
 Por cada corrida: p95, pedidos por segundo y porcentaje de errores (del generador y de Prometheus), CPU y memoria de cada contenedor (`docker stats`) y pedidos por instancia. También anotamos la máquina en la que corrimos, para que los números se puedan comparar.
