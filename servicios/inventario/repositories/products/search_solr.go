@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"inventario/models/products"
 )
@@ -22,6 +23,7 @@ type SearchSolr struct {
 type solrDocument struct {
 	ID          string  `json:"id"`
 	Nombre      string  `json:"nombre"`
+	NombreOrden string  `json:"nombre_orden,omitempty"`
 	Descripcion string  `json:"descripcion,omitempty"`
 	Proveedor   *string `json:"proveedor,omitempty"`
 	Score       float64 `json:"score,omitempty"`
@@ -35,9 +37,11 @@ type solrResponse struct {
 	} `json:"response"`
 }
 
-// fields son los campos del índice. id ya viene en el esquema de Solr.
+// fields son los campos del índice. id ya viene en el esquema de Solr. nombre está separado en palabras
+// para buscar, y así no se puede ordenar: para ordenar está nombre_orden, el nombre entero en minúsculas.
 var fields = []map[string]any{
 	{"name": "nombre", "type": "text_es", "indexed": true, "stored": true, "multiValued": false},
+	{"name": "nombre_orden", "type": "string", "indexed": true, "stored": false, "multiValued": false},
 	{"name": "descripcion", "type": "text_es", "indexed": true, "stored": true, "multiValued": false},
 	{"name": "proveedor", "type": "string", "indexed": true, "stored": true, "multiValued": false},
 }
@@ -56,6 +60,10 @@ func (repo SearchSolr) Search(query products.SearchQuery) (products.SearchResult
 	// {!term} toma el proveedor como valor literal, no como sintaxis de Solr, y no cambia la relevancia.
 	if query.Supplier != "" {
 		params.Add("fq", "{!term f=proveedor}"+query.Supplier)
+	}
+	// Sin sort, Solr ordena por relevancia (score). Por nombre, a igual nombre desempata el id.
+	if query.Sort == products.SortName {
+		params.Set("sort", "nombre_orden asc, id asc")
 	}
 
 	response, err := repo.Client.Get(repo.BaseURL + "/select?" + params.Encode())
@@ -91,27 +99,35 @@ func (repo SearchSolr) SaveProducts(list []products.ProductModel) error {
 	documents := make([]solrDocument, 0, len(list))
 	for _, product := range list {
 		documents = append(documents, solrDocument{
-			ID: strconv.FormatUint(uint64(product.ID), 10), Nombre: product.Name,
+			ID: strconv.FormatUint(uint64(product.ID), 10), Nombre: product.Name, NombreOrden: strings.ToLower(product.Name),
 			Descripcion: product.Description, Proveedor: product.Supplier,
 		})
 	}
 	return repo.post("/update?commitWithin=1000", documents)
 }
 
-// CreateFields pregunta si ya existe el campo nombre. Si Solr responde 404, el índice es nuevo y crea los campos.
+// CreateFields pregunta por cada campo y crea los que Solr no tiene (404). Así un índice nuevo recibe
+// todos, y uno que ya existía recibe solo los que sumamos después, como nombre_orden.
 func (repo SearchSolr) CreateFields() error {
-	response, err := repo.Client.Get(repo.BaseURL + "/schema/fields/nombre")
-	if err != nil {
-		return fmt.Errorf("consultar el esquema de Solr: %w", err)
+	var missing []map[string]any
+	for _, field := range fields {
+		response, err := repo.Client.Get(repo.BaseURL + "/schema/fields/" + field["name"].(string))
+		if err != nil {
+			return fmt.Errorf("consultar el esquema de Solr: %w", err)
+		}
+		response.Body.Close()
+		switch response.StatusCode {
+		case http.StatusOK:
+		case http.StatusNotFound:
+			missing = append(missing, field)
+		default:
+			return fmt.Errorf("Solr respondió HTTP %d al consultar el esquema", response.StatusCode)
+		}
 	}
-	response.Body.Close()
-	if response.StatusCode == http.StatusOK {
+	if len(missing) == 0 {
 		return nil
 	}
-	if response.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("Solr respondió HTTP %d al consultar el esquema", response.StatusCode)
-	}
-	return repo.post("/schema", map[string]any{"add-field": fields})
+	return repo.post("/schema", map[string]any{"add-field": missing})
 }
 
 func (repo SearchSolr) post(path string, body any) error {

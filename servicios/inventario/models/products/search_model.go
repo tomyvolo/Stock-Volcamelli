@@ -7,7 +7,14 @@ type SearchQuery struct {
 	Supplier string
 	Page     int
 	Size     int
+	Sort     string // SortRelevance o SortName
 }
+
+// Los órdenes posibles de la búsqueda.
+const (
+	SortRelevance = "relevancia"
+	SortName      = "nombre"
+)
 
 // SearchResult es un producto encontrado, con su relevancia.
 type SearchResult struct {
