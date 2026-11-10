@@ -34,6 +34,10 @@ func AuthRequired() gin.HandlerFunc {
 		if claims.BranchID != nil {
 			ctx.Set("branch_id", *claims.BranchID)
 		}
+		// La conexión de Tiempo Real queda abierta: el proxy la corta cuando vence el token.
+		if claims.ExpiresAt != nil {
+			ctx.Set("token_expires", claims.ExpiresAt.Time)
+		}
 
 		ctx.Next()
 	}
