@@ -100,6 +100,7 @@ func (r *Repositorio) PendientesDeEnvio() ([]*dominio.Transferencia, error) {
 		bson.M{"estado": dominio.Reservada, "id_rumbo": ""},
 		bson.M{"cancelacion_por_enviar": bson.M{"$ne": nil}},
 		bson.M{"liberacion_por_enviar": true},
+		bson.M{"eventos_por_publicar": true},
 	}}
 	lista, _, err := r.buscar(ctx, consulta, options.Find().SetSort(bson.D{{Key: "creada_en", Value: 1}}), 0)
 	return lista, err

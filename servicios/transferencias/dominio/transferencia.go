@@ -100,6 +100,9 @@ type Transferencia struct {
 	// Lo que todavía hay que mandar, en segundo plano.
 	CancelacionPorEnviar *string // motivo de la cancelación
 	LiberacionPorEnviar  bool    // pedirle a Inventario que libere la reserva (después de un timeout)
+	// EventosPorPublicar se guarda en true junto con cada cambio de estado y vuelve a false cuando sus
+	// eventos salieron. Si RabbitMQ no estaba, un proceso de fondo los vuelve a publicar.
+	EventosPorPublicar bool
 }
 
 // Nueva arma una transferencia y controla sus reglas: cantidad mayor a 0, sucursales distintas y una hora

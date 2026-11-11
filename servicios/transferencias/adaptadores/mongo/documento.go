@@ -31,6 +31,7 @@ type documento struct {
 	ActualizadoEnRumbo   *time.Time       `bson:"actualizado_en_rumbo"`
 	CancelacionPorEnviar *string          `bson:"cancelacion_por_enviar"`
 	LiberacionPorEnviar  bool             `bson:"liberacion_por_enviar"`
+	EventosPorPublicar   bool             `bson:"eventos_por_publicar"`
 }
 
 type franja struct {
@@ -68,7 +69,7 @@ func aDocumento(t *dominio.Transferencia) documento {
 		Estado: string(t.Estado), Historial: historial,
 		IDRumbo: t.IDRumbo, Franja: f, DemoraMinutos: t.DemoraMinutos, Motivo: t.Motivo,
 		ActualizadoEnRumbo: t.ActualizadoEnRumbo, CancelacionPorEnviar: t.CancelacionPorEnviar,
-		LiberacionPorEnviar: t.LiberacionPorEnviar,
+		LiberacionPorEnviar: t.LiberacionPorEnviar, EventosPorPublicar: t.EventosPorPublicar,
 	}
 }
 
@@ -91,6 +92,6 @@ func (d documento) aDominio() *dominio.Transferencia {
 		Estado: dominio.Estado(d.Estado), Historial: historial,
 		IDRumbo: d.IDRumbo, Franja: f, DemoraMinutos: d.DemoraMinutos, Motivo: d.Motivo,
 		ActualizadoEnRumbo: d.ActualizadoEnRumbo, CancelacionPorEnviar: d.CancelacionPorEnviar,
-		LiberacionPorEnviar: d.LiberacionPorEnviar,
+		LiberacionPorEnviar: d.LiberacionPorEnviar, EventosPorPublicar: d.EventosPorPublicar,
 	}
 }

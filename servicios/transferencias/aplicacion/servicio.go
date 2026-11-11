@@ -61,6 +61,9 @@ type Servicio struct {
 
 	// Los eventos de los pedidos de los usuarios se publican en segundo plano. Los tests esperan acá a que terminen.
 	publicando sync.WaitGroup
+	// enVuelo son las transferencias cuyos eventos se están publicando en segundo plano. El proceso de
+	// fondo no las vuelve a publicar mientras tanto.
+	enVuelo sync.Map // id de la transferencia -> true
 }
 
 // bloquear toma el lock de la transferencia y devuelve la función que lo suelta.
@@ -121,6 +124,7 @@ func (s *Servicio) Crear(pedido Pedido, usuario Usuario, trackID string) (*domin
 		s.Registro.Escribir(trackID, "error", fmt.Sprintf("transferencia %s fallida: no se pudo reservar: %v", t.ID, err))
 	}
 
+	t.EventosPorPublicar = true
 	if err := s.Repo.Guardar(t); err != nil {
 		if t.Estado == dominio.Reservada {
 			// Sin la transferencia guardada, nadie va a liberar esa reserva después: la liberamos ahora.
@@ -170,6 +174,9 @@ func (s *Servicio) Cancelar(id string, usuario Usuario, motivo string) (*dominio
 	if err != nil {
 		return nil, err
 	}
+	if canceladaYa {
+		t.EventosPorPublicar = true
+	}
 	if err := s.Repo.Guardar(t); err != nil {
 		return nil, err
 	}
@@ -179,22 +186,33 @@ func (s *Servicio) Cancelar(id string, usuario Usuario, motivo string) (*dominio
 	return t, nil
 }
 
-// publicar avisa cada cambio de estado y, si la transferencia terminó, le dice a Inventario
-// que confirme o libere la reserva. Si no se puede publicar, queda en el log de error.
-func (s *Servicio) publicar(t *dominio.Transferencia) {
-	s.enviar(s.eventos(t))
-}
-
-// publicarSinEsperar es publicar para los pedidos de los usuarios. Con RabbitMQ caído, cada evento
-// tarda hasta 7 segundos en reintentos, y el gateway corta a los 5: el usuario veía un error aunque la
-// transferencia ya estaba guardada, y si volvía a intentar la creaba dos veces.
+// publicarSinEsperar avisa cada cambio de estado y, si la transferencia terminó, le dice a Inventario
+// que confirme o libere la reserva. Si salieron todos los eventos, saca la marca; si no, la marca queda
+// y el proceso de fondo los vuelve a publicar.
+//
+// Publica en segundo plano y sin el lock de la transferencia. Con RabbitMQ caído, cada evento tarda
+// hasta 7 segundos en reintentos y el gateway corta a los 5: si el usuario esperara la publicación, o
+// esperara el lock mientras otro publica, vería un error aunque su pedido ya estaba guardado.
 func (s *Servicio) publicarSinEsperar(t *dominio.Transferencia) {
-	eventos := s.eventos(t)
+	eventos, id, estado := s.eventos(t), t.ID, t.Estado
+	s.enVuelo.Store(id, true)
 	s.publicando.Add(1)
 	go func() {
 		defer s.publicando.Done()
-		s.enviar(eventos)
+		defer s.enVuelo.Delete(id)
+		if s.enviar(eventos) {
+			s.conLock(id, func(t *dominio.Transferencia) { s.publicado(t, estado) })
+		}
 	}()
+}
+
+// publicado saca la marca de eventos por publicar, si la transferencia sigue en el estado que se publicó.
+// Si cambió mientras tanto, la marca es del cambio nuevo y queda.
+func (s *Servicio) publicado(t *dominio.Transferencia, estado dominio.Estado) {
+	if t.EventosPorPublicar && t.Estado == estado {
+		t.EventosPorPublicar = false
+		s.guardar(t)
+	}
 }
 
 func (s *Servicio) eventos(t *dominio.Transferencia) []puertos.Evento {
@@ -216,10 +234,14 @@ func (s *Servicio) eventos(t *dominio.Transferencia) []puertos.Evento {
 	return eventos
 }
 
-func (s *Servicio) enviar(eventos []puertos.Evento) {
+// enviar publica los eventos en orden y devuelve false si alguno no salió. Ante el primero que falla
+// deja de intentar: RabbitMQ no está, y el proceso de fondo los vuelve a publicar todos.
+func (s *Servicio) enviar(eventos []puertos.Evento) bool {
 	for _, evento := range eventos {
 		if err := s.Eventos.Publicar(evento); err != nil {
-			s.Registro.Escribir(evento.TrackID, "error", fmt.Sprintf("no se pudo publicar %s de la transferencia %s: %v", evento.Tipo, evento.TransferenciaID, err))
+			s.Registro.Escribir(evento.TrackID, "error", fmt.Sprintf("no se pudo publicar %s de la transferencia %s, se reintenta: %v", evento.Tipo, evento.TransferenciaID, err))
+			return false
 		}
 	}
+	return true
 }

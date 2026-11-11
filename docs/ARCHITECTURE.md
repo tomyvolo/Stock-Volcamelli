@@ -217,7 +217,7 @@ Prometheus junta las métricas y Grafana las muestra en un tablero junto con los
 Cada falla afecta solo lo que depende de esa pieza. Lo más importante, consultar stock y lo que publicamos, depende solo de Inventario y su MySQL:
 
 - Todas las llamadas tienen timeout, y las de los usuarios no se reintentan solas: si algo falla, lo ve enseguida.
-- Los procesos de fondo reintentan solos (los de Transferencias en su vuelta siguiente; publicar eventos y actualizar Solr, esperando cada vez más), y las operaciones se pueden repetir sin duplicar efectos.
+- Los procesos de fondo reintentan solos (los de Transferencias en su vuelta siguiente; publicar eventos y actualizar Solr, esperando cada vez más), y las operaciones se pueden repetir sin duplicar efectos. Si RabbitMQ no está, los eventos de Transferencias quedan marcados y salen cuando vuelve.
 - Con Rumbo usamos un circuit breaker: después de 5 fallas seguidas dejamos de llamarlo por 30 segundos.
 - Si se cae Memcached, Usuarios y Sucursales leen de MySQL. Si se cae Solr, solo deja de andar la búsqueda. Si se cae Usuarios, los que ya tienen token siguen trabajando.
 
@@ -257,7 +257,7 @@ Lo que sabemos que el sistema no resuelve, o resuelve de una forma más simple d
 | Limitación | Por qué la aceptamos | Qué haríamos si hiciera falta |
 |---|---|---|
 | Transferencias y Tiempo Real corren en una sola instancia | Transferencias hace la consulta de cambios a Rumbo y usa locks en memoria; Tiempo Real tiene las conexiones abiertas en su memoria. Con dos, habría que coordinarlas | Un lock en MongoDB para los procesos de fondo y repartir las conexiones entre instancias ([ADR-009](adr/ADR-009-consumo-de-rumbo.md), [ADR-019](adr/ADR-019-tiempo-real.md)) |
-| Si RabbitMQ no está al publicar un evento, después de 4 intentos queda en el log de error para publicarlo a mano | No se pierden unidades: quedan reservadas hasta que se publica. Evitarlo pedía una tabla y un proceso más en cada servicio | Guardar el evento junto con el cambio y publicarlo desde ahí (outbox, [ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)) |
+| Si RabbitMQ no está cuando Inventario publica un evento, después de 4 intentos queda solo en el log de error | Sus eventos no mueven stock: un producto que no llegó a Solr se arregla reconstruyendo el índice, y un aviso de stock perdido, recargando la pantalla. Los de Transferencias, que sí mueven stock, quedan marcados y se vuelven a publicar solos ([ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)) | La misma marca que usa Transferencias, o una tabla de eventos pendientes |
 | La sucursal y el rol van en el token, que dura 1 hora y no se puede revocar | Evita consultar Usuarios en cada pedido | Tokens más cortos con renovación, o una lista de tokens revocados en Memcached |
 | La caché de Usuarios y Sucursales no se borra cuando un dato cambia | Un cambio tarda como mucho 60 segundos en verse, y los permisos no salen de la caché ([ADR-007](adr/ADR-007-cache.md)) | Borrar la clave al guardar |
 | La búsqueda puede atrasarse hasta 5 segundos, y si un evento de producto se pierde, el producto queda desactualizado hasta que corremos la reconstrucción a mano | Es una búsqueda, no la fuente del stock ([ADR-006](adr/ADR-006-busqueda.md)) | Correr la reconstrucción programada, por ejemplo cada noche |

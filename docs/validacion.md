@@ -316,6 +316,18 @@ El campo `nombre_orden` se creó solo al arrancar Inventario, sobre el índice q
 
 **Crear con RabbitMQ caído (D10).** Con `docker compose stop rabbitmq`, crear una transferencia de 1 Harina 000 respondió `201` en 0,74 segundos (antes del arreglo, `503` a los 5,1). El disponible bajó de 311 a 310 y los eventos que no se pudieron publicar quedaron en el log de error ("no se pudo publicar TransferenciaActualizada… después de 4 intentos"). Con RabbitMQ de vuelta, cancelarla respondió `200` en 0,03 segundos, quedó `CANCELADA` y el disponible volvió a 311.
 
+**Cancelar con RabbitMQ caído (D10).** Lo probó una revisión externa el 10/11/2026: con 5 disponibles en el origen, reservó 1 (quedaron 4) y canceló la transferencia con RabbitMQ apagado. Transferencias la guardó `CANCELADA`, pero al volver RabbitMQ el disponible siguió en 4: el `TrasladoCancelado` había quedado solo en el log de error y nadie lo volvía a publicar. Publicando de nuevo el evento el disponible volvió a 5, y repetirlo lo dejó en 5. Lo arreglamos con la marca de eventos por publicar ([ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)). Los tests de Transferencias cubren cancelar y completar con RabbitMQ caído, que la marca se saque al publicar, que con RabbitMQ todavía caído cada vuelta pruebe con una sola transferencia y que cancelar no espere los reintentos del proceso de fondo.
+
+Con el arreglo, el 11/11/2026 repetimos el ensayo con el sistema levantado y Rumbo real:
+
+| Paso | Resultado |
+|---|---|
+| `docker compose stop rabbitmq` y crear una transferencia de 1 Harina 000 | `201` en 0,39 segundos, el disponible bajó de 311 a 310. Rumbo la programó a los 3 segundos |
+| Cancelar mientras el proceso de fondo reintentaba publicar | `200` en 0,6 segundos. Rumbo canceló el traslado y la transferencia quedó `CANCELADA` con `eventos_por_publicar: true`. El disponible siguió en 310 |
+| `docker compose start rabbitmq` | A los 21 segundos el log dice "eventos de la transferencia … (CANCELADA) publicados en el reintento", Inventario procesó el `TrasladoCancelado` y el disponible volvió solo a 311. La marca quedó en `false` |
+
+En una primera corrida del arreglo, cancelar respondió `503` a los 5 segundos aunque la cancelación se aplicó 26 segundos después: el proceso de fondo reintentaba publicar con la transferencia tomada y el pedido esperaba detrás. Lo corregimos publicando siempre sin el lock ([ADR-010](adr/ADR-010-resiliencia.md)), y es la corrida de la tabla.
+
 ## 16. Pruebas que faltan correr
 
 | Prueba | Qué valida | Cómo | Qué tiene que dar |
@@ -348,4 +360,5 @@ El campo `nombre_orden` se creó solo al arrancar Inventario, sobre el índice q
 | Con la máquina cargada, Transferencias se cerraba al arrancar: el MySQL de logs tardó más de 2 segundos en decirle si existía la tabla, intentó crearla y falló porque ya estaba | Los 8 servicios abren la conexión de logs sin probarla y crean la tabla en segundo plano, como ya hacía Inventario ([ADR-011](adr/ADR-011-observabilidad.md)) |
 | `docker compose up` fallaba con "mongo-transferencias is unhealthy" aunque Mongo respondía | El chequeo de salud con `mongosh` pasaba los 3 segundos con la máquina cargada. Lo subimos a 10 |
 | Cancelar respondía `503` aunque la cancelación se aplicaba, y se mandaba a Rumbo una cancelación de más | Lock por transferencia, y los datos de Rumbo más viejos que la cancelación se ignoran (sección 12) |
+| Con RabbitMQ caído, cancelar una transferencia la dejaba `CANCELADA` pero la reserva seguía activa cuando RabbitMQ volvía: el evento quedaba solo en el log de error. Lo encontró una revisión externa | Transferencias guarda la marca de eventos por publicar junto con el cambio de estado, y el proceso de fondo los vuelve a publicar hasta que salen, sin tener la transferencia tomada ([ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)). Probado con el sistema levantado: el disponible volvió solo a los 21 segundos de levantar RabbitMQ (sección 15) |
 | Con RabbitMQ caído, crear una transferencia respondía `503` a los 5 segundos aunque quedaba creada y reservada; si el usuario volvía a intentar, la creaba dos veces. Lo encontró una revisión externa | Crear y cancelar publican los eventos en segundo plano, como ya hacía Inventario ([ADR-010](adr/ADR-010-resiliencia.md)). Lo probamos con RabbitMQ apagado: `201` en 0,74 segundos (sección 15) |

@@ -43,19 +43,19 @@ Los tres pasos se identifican con el id de la transferencia. Entre un paso y otr
 | Inventario se cae mientras procesa un evento | La transacción no se guardó | Inventario confirma el mensaje recién después de guardar. Como no lo confirmó, RabbitMQ se lo vuelve a entregar, y si ya lo había guardado, el id del evento evita repetirlo |
 | RabbitMQ se reinicia | Los eventos que Inventario todavía no procesó estaban en las colas | Las colas son durables y los mensajes persistentes, así que los eventos pendientes siguen ahí |
 | Un evento no se puede procesar (por ejemplo, confirmar una reserva ya liberada) | Reintentarlo no lo arregla | Va a la cola de errores y queda en el log, para revisarlo ([ADR-016](ADR-016-comunicacion-entre-servicios.md)) |
-| RabbitMQ no está cuando hay que publicar | El cambio ya está guardado pero el evento no salió | Se reintenta, y si sigue sin poder, el evento completo queda en el log de error para publicarlo a mano |
+| RabbitMQ no está cuando hay que publicar | El cambio ya está guardado pero el evento no salió | Transferencias guarda la marca de eventos por publicar junto con el cambio de estado, y un proceso de fondo los vuelve a publicar cada 10 segundos hasta que salen. Si salen dos veces, Inventario ignora el repetido ([ADR-016](ADR-016-comunicacion-entre-servicios.md)) |
 
-El último caso es el único en el que dependemos de una persona. Aun así no se pierden unidades: quedan reservadas en el origen hasta que se publica el evento.
+Salvo los eventos que van a la cola de errores, que revisamos nosotros, lo que no se pudo hacer en el momento lo reintenta un proceso de fondo. Mientras tanto las unidades quedan reservadas en el origen: no se pierden.
 
 ## Alternativas que descartamos
 - **Una transacción distribuida entre Transferencias e Inventario.** Haría todo en un paso, pero ninguna de las herramientas que usamos la ofrece entre MongoDB y MySQL, y si un servicio se cae en el medio, las filas quedan bloqueadas hasta que vuelve.
 - **Control optimista: guardar una versión en cada fila y reintentar si cambió.** No bloquea, pero con muchas transferencias del mismo producto al mismo tiempo la mayoría tendría que reintentar. Con `FOR UPDATE` la espera es corta, porque cada transacción toca una o dos filas.
 - **Controlar el stock solo en el código.** Era más simple, pero un error nuestro podía dejar un stock negativo guardado. Con el `CHECK` y las columnas sin signo, la base lo rechaza.
-- **Guardar el evento junto con el cambio y publicarlo desde ahí (outbox).** Evitaría publicar a mano, y lo descartamos en [ADR-016](ADR-016-comunicacion-entre-servicios.md) por la tabla y el proceso extra que suma en cada servicio.
+- **Una tabla de eventos pendientes (outbox completo).** En Transferencias alcanza con una marca en el mismo documento de la transferencia ([ADR-016](ADR-016-comunicacion-entre-servicios.md)).
 
 ## Consecuencias
 - Las unidades de una transferencia quedan reservadas hasta que termina, que puede ser varios días.
 - Una consulta de stock puede mostrar el disponible de un instante antes; si alguien reserva en ese momento, la transferencia del otro puede quedar `SIN_STOCK`.
 - Entre que Rumbo informa que el traslado llegó y el destino ve las unidades pasan hasta 60 segundos, más lo que tarde el evento en la cola.
-- Si RabbitMQ está caído un buen rato, puede haber eventos para publicar a mano, y hasta entonces esas unidades siguen reservadas.
+- Si RabbitMQ está caído, las unidades de los traslados que terminan mientras tanto siguen reservadas hasta que vuelve. Después el proceso de fondo publica los eventos en su vuelta siguiente.
 - Transferencias tiene que seguir corriendo en una sola instancia.

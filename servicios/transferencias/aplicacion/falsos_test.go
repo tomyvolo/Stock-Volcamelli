@@ -1,6 +1,7 @@
 package aplicacion
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -12,13 +13,18 @@ import (
 
 // Versiones falsas de los puertos, para probar los casos de uso sin MongoDB, ni HTTP, ni Rumbo.
 
+// El mutex es porque los eventos se publican en segundo plano y, al terminar, guardan la transferencia
+// mientras el proceso de fondo puede estar recorriendo las pendientes.
 type repoFalso struct {
+	mu             sync.Mutex
 	transferencias map[string]*dominio.Transferencia
 	ultimaConsulta time.Time
 	errGuardar     error // simula MongoDB fallando al guardar
 }
 
 func (r *repoFalso) Guardar(t *dominio.Transferencia) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.errGuardar != nil {
 		return r.errGuardar
 	}
@@ -27,6 +33,8 @@ func (r *repoFalso) Guardar(t *dominio.Transferencia) error {
 }
 
 func (r *repoFalso) Obtener(id string) (*dominio.Transferencia, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	t, existe := r.transferencias[id]
 	if !existe {
 		return nil, puertos.ErrNoExiste
@@ -39,6 +47,8 @@ func (r *repoFalso) Listar(filtro puertos.Filtro) ([]*dominio.Transferencia, int
 }
 
 func (r *repoFalso) PendientesDeEnvio() ([]*dominio.Transferencia, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var lista []*dominio.Transferencia
 	for _, t := range r.transferencias {
 		lista = append(lista, t)
@@ -153,14 +163,29 @@ type eventosFalsos struct {
 	publicados []puertos.Evento
 	espera     *sync.WaitGroup // los eventos que el servicio publica en segundo plano
 	lento      time.Duration   // simula RabbitMQ caído, que tarda en reintentos
+	caido      bool            // simula RabbitMQ caído después de los reintentos: Publicar falla
+	intentos   int
 }
 
 func (e *eventosFalsos) Publicar(evento puertos.Evento) error {
 	time.Sleep(e.lento)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.intentos++
+	if e.caido {
+		return errors.New("RabbitMQ no responde")
+	}
 	e.publicados = append(e.publicados, evento)
 	return nil
+}
+
+// rabbitMQ espera los eventos en segundo plano y deja a RabbitMQ caído o andando.
+func (e *eventosFalsos) rabbitMQ(caido bool) {
+	e.espera.Wait()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.caido = caido
+	e.intentos = 0
 }
 
 // todos espera los eventos en segundo plano y devuelve todo lo publicado.
