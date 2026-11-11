@@ -38,14 +38,15 @@ Los tres pasos se identifican con el id de la transferencia. Entre un paso y otr
 | Qué falla | Qué pasa | Cómo se resuelve |
 |---|---|---|
 | Inventario no responde al reservar | No sabemos si reservó. La transferencia queda `FALLIDA` | Un proceso de fondo le pide a Inventario que libere hasta que responde. Si la liberación llega antes que la reserva, Inventario la anota como liberada y rechaza la reserva cuando llega tarde (CA-14) |
-| Transferencias no puede guardar la transferencia después de reservar | Hay una reserva sin transferencia | La libera en el momento |
+| Transferencias no puede guardar la transferencia después de reservar | Hay una reserva sin transferencia | La libera en el momento. Lo intenta una sola vez: si Inventario tampoco responde, la reserva queda huérfana y hay que liberarla a mano. No está resuelto |
 | Rumbo no responde | La transferencia sigue `RESERVADA` | Se reintenta con la misma clave. A las 24 horas queda `RECHAZADA` y se libera ([ADR-009](ADR-009-consumo-de-rumbo.md)) |
 | Inventario se cae mientras procesa un evento | La transacción no se guardó | Inventario confirma el mensaje recién después de guardar. Como no lo confirmó, RabbitMQ se lo vuelve a entregar, y si ya lo había guardado, el id del evento evita repetirlo |
 | RabbitMQ se reinicia | Los eventos que Inventario todavía no procesó estaban en las colas | Las colas son durables y los mensajes persistentes, así que los eventos pendientes siguen ahí |
 | Un evento no se puede procesar (por ejemplo, confirmar una reserva ya liberada) | Reintentarlo no lo arregla | Va a la cola de errores y queda en el log, para revisarlo ([ADR-016](ADR-016-comunicacion-entre-servicios.md)) |
-| RabbitMQ no está cuando hay que publicar | El cambio ya está guardado pero el evento no salió | Transferencias guarda la marca de eventos por publicar junto con el cambio de estado, y un proceso de fondo los vuelve a publicar cada 10 segundos hasta que salen. Si salen dos veces, Inventario ignora el repetido ([ADR-016](ADR-016-comunicacion-entre-servicios.md)) |
+| RabbitMQ no está cuando hay que publicar | El cambio ya está guardado pero el evento no salió | Transferencias guarda la marca de eventos por publicar junto con el cambio de estado, y un proceso de fondo los vuelve a publicar cada 10 segundos hasta que salen. Si salen dos veces, Inventario no los aplica de nuevo porque la reserva ya está liberada o confirmada ([ADR-016](ADR-016-comunicacion-entre-servicios.md)) |
+| RabbitMQ acepta el evento pero no hay una cola de Inventario enlazada | RabbitMQ lo descarta, Transferencias lo da por publicado y saca la marca | No está resuelto: la reserva queda activa y hay que liberarla a mano ([ADR-016](ADR-016-comunicacion-entre-servicios.md)) |
 
-Salvo los eventos que van a la cola de errores, que revisamos nosotros, lo que no se pudo hacer en el momento lo reintenta un proceso de fondo. Mientras tanto las unidades quedan reservadas en el origen: no se pierden.
+Salvo los eventos que van a la cola de errores, que revisamos nosotros, y los dos casos de la tabla que no están resueltos, lo que no se pudo hacer en el momento lo reintenta un proceso de fondo. Mientras tanto las unidades quedan reservadas en el origen: no se pierden.
 
 ## Alternativas que descartamos
 - **Una transacción distribuida entre Transferencias e Inventario.** Haría todo en un paso, pero ninguna de las herramientas que usamos la ofrece entre MongoDB y MySQL, y si un servicio se cae en el medio, las filas quedan bloqueadas hasta que vuelve.

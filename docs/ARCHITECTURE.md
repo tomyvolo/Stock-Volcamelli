@@ -44,7 +44,7 @@ Elegimos Go para todos los servicios y para el gateway, así todo el equipo trab
 
 ## 3. API Gateway
 
-Es la única puerta de entrada al sistema, tanto para nuestro frontend como para el grupo que consume nuestro catálogo. Lo hacemos nosotros en Go con Gin y no tiene lógica de negocio ni base de datos. Hace cuatro cosas:
+Es la única puerta de entrada al sistema para nuestro frontend. El grupo que consume nuestro catálogo no pasa por acá: usa Inventario publicado en la nube, con su API key (sección 9). Lo hacemos nosotros en Go con Gin y no tiene lógica de negocio ni base de datos. Hace cuatro cosas:
 
 1. **Controla el tráfico.** Acepta hasta 300 pedidos por minuto de cada IP. Los que sobran reciben `429` con `Retry-After` y no llegan a ningún servicio. Se controla antes que el token, así también frena a quien prueba contraseñas en el login. El detalle está en [ADR-010](adr/ADR-010-resiliencia.md).
 2. **Valida el token.** Todos los pedidos, salvo el login, tienen que traer un JWT en `Authorization: Bearer <token>`. El gateway verifica la firma y que no esté vencido. Si falla, responde `401` y el pedido no llega a ningún servicio. El token lo emite Usuarios en el login.
@@ -210,7 +210,7 @@ Todos los servicios guardan sus logs con GORM en la tabla `app_logs` de un MySQL
 
 Cada servicio expone sus métricas en `GET /metrics`: el contador `requests_total` y el histograma `request_duration_seconds`, los dos por ruta y código de respuesta. Además, Usuarios y Sucursales cuentan los aciertos y fallos de la caché, Inventario cuenta los mensajes que manda a la cola de errores, y Transferencias cuenta los errores de Rumbo y las aperturas del circuit breaker.
 
-Prometheus junta las métricas y Grafana las muestra en un tablero junto con los logs y las trazas, donde también están las alertas. El objetivo de servicio está puesto sobre lo que publicamos: 99 % de las consultas del contrato sin error y 95 % en menos de 500 ms. El detalle está en [ADR-011](adr/ADR-011-observabilidad.md).
+Prometheus junta las métricas y Grafana las muestra en un tablero junto con los logs y las trazas. Las alertas están definidas en ADR-011, pero todavía no las cargamos en Grafana. El objetivo de servicio está puesto sobre lo que publicamos: 99 % de las consultas del contrato sin error y 95 % en menos de 500 ms. El detalle está en [ADR-011](adr/ADR-011-observabilidad.md).
 
 ## 11. Qué pasa cuando algo falla
 
@@ -258,6 +258,9 @@ Lo que sabemos que el sistema no resuelve, o resuelve de una forma más simple d
 |---|---|---|
 | Transferencias y Tiempo Real corren en una sola instancia | Transferencias hace la consulta de cambios a Rumbo y usa locks en memoria; Tiempo Real tiene las conexiones abiertas en su memoria. Con dos, habría que coordinarlas | Un lock en MongoDB para los procesos de fondo y repartir las conexiones entre instancias ([ADR-009](adr/ADR-009-consumo-de-rumbo.md), [ADR-019](adr/ADR-019-tiempo-real.md)) |
 | Si RabbitMQ no está cuando Inventario publica un evento, después de 4 intentos queda solo en el log de error | Sus eventos no mueven stock: un producto que no llegó a Solr se arregla reconstruyendo el índice, y un aviso de stock perdido, recargando la pantalla. Los de Transferencias, que sí mueven stock, quedan marcados y se vuelven a publicar solos ([ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)) | La misma marca que usa Transferencias, o una tabla de eventos pendientes |
+| Un evento de Transferencias que RabbitMQ acepta pero no llega a ninguna cola se pierde, y la reserva queda activa | Pasa solo si la cola de Inventario no existe o no está enlazada, por ejemplo si RabbitMQ se recrea sin datos y Transferencias publica antes de que Inventario se reconecte. Publicamos sin confirmación de RabbitMQ | Publicar con confirmaciones y `mandatory`, y dejar la marca si RabbitMQ no confirma o devuelve el mensaje ([ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)) |
+| Si Transferencias no puede guardar una transferencia recién reservada y la liberación también falla, la reserva queda huérfana | Necesita que fallen MongoDB e Inventario en el mismo pedido ([ADR-004](adr/ADR-004-consistencia-y-concurrencia.md)) | Guardar la liberación pendiente, o un proceso que compare las reservas activas con las transferencias |
+| Todos los que salen a internet por la misma IP comparten los 300 pedidos por minuto del control de tráfico | Para el uso que esperamos alcanza. La IP solo se le cree al NGINX del frontend, así nadie se saltea el límite con un encabezado ([ADR-010](adr/ADR-010-resiliencia.md)) | Subir el límite con `RATE_LIMIT_PER_MINUTE`, o contar por usuario además de por IP |
 | La sucursal y el rol van en el token, que dura 1 hora y no se puede revocar | Evita consultar Usuarios en cada pedido | Tokens más cortos con renovación, o una lista de tokens revocados en Memcached |
 | La caché de Usuarios y Sucursales no se borra cuando un dato cambia | Un cambio tarda como mucho 60 segundos en verse, y los permisos no salen de la caché ([ADR-007](adr/ADR-007-cache.md)) | Borrar la clave al guardar |
 | La búsqueda puede atrasarse hasta 5 segundos, y si un evento de producto se pierde, el producto queda desactualizado hasta que corremos la reconstrucción a mano | Es una búsqueda, no la fuente del stock ([ADR-006](adr/ADR-006-busqueda.md)) | Correr la reconstrucción programada, por ejemplo cada noche |
@@ -281,6 +284,6 @@ Lo que sabemos que el sistema no resuelve, o resuelve de una forma más simple d
 
 ### Deuda técnica
 - Los procesos de fondo de Transferencias recorren todas las pendientes en cada vuelta. Con muchas transferencias esperando a Rumbo, una vuelta podría tardar más que los 10 segundos entre vueltas.
-- Las alertas se ven en Grafana, pero no avisan por mail ni por Discord ([ADR-011](adr/ADR-011-observabilidad.md)).
+- Las cuatro alertas de [ADR-011](adr/ADR-011-observabilidad.md) están definidas pero no cargadas en Grafana: en una instalación limpia no hay ninguna regla, y tampoco avisan por mail ni por Discord. Las fallas se ven en el tablero.
 - Los secretos (contraseñas, la clave de Rumbo, la del modelo) van en el `.env` de cada uno. No usamos un gestor de secretos.
 - Localmente todo corre por HTTP, sin HTTPS.

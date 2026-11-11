@@ -66,7 +66,7 @@ No hay `503` propio: en el sistema completo lo devuelve el gateway, y en la nube
 | Pieza | Dónde | Por qué |
 |---|---|---|
 | Inventario | Un Web Service de Render, construido con el `Dockerfile` de `servicios/inventario` | Corre contenedores y da una URL pública con HTTPS. Las horas gratis del mes alcanzan para un servicio prendido todo el tiempo |
-| MySQL | Un MySQL gratis de Aiven | Render no tiene MySQL, y el disco de su plan gratis se borra en cada reinicio. Aiven no pide tarjeta ni vence. Cargamos `servicios/inventario/mysql/001_schema.sql` y la tabla `app_logs` de `observabilidad/mysql/001_schema.sql` |
+| MySQL | Un MySQL gratis de Aiven | Render no tiene MySQL, y el disco de su plan gratis se borra en cada reinicio. Aiven no pide tarjeta. El MySQL gratis lo retira el 21/12/2026 (sección 14 de [ARCHITECTURE](../ARCHITECTURE.md)). Cargamos `servicios/inventario/mysql/001_schema.sql` y la tabla `app_logs` de `observabilidad/mysql/001_schema.sql` |
 | Logs | La misma base de Aiven, en la tabla `app_logs` | `MYSQL_DSN` apunta a la misma base que `DB_DSN`. No hay un MySQL aparte para logs |
 | Que no se duerma | Una consulta a `/api/products?size=1` con la API key cada 10 minutos desde cron-job.org | Render duerme los servicios gratis después de 15 minutos sin pedidos, y despertar tarda cerca de un minuto. Usamos una consulta de verdad y no `/health` porque así también se usa la base, y Aiven no la apaga por falta de uso |
 

@@ -48,9 +48,11 @@ NGINX responde `502` si no pudo conectarse con ninguna instancia, o `504` si se 
 ### Cómo mostramos que funciona
 NGINX registra en su log, por cada pedido, a qué instancia fue (`upstream_addr`), cuánto tardó, el código de respuesta y el `track_id`. Para demostrarlo:
 
-1. Con las dos instancias arriba, el log muestra los pedidos repartidos entre A y B.
-2. Apagamos A (`docker compose stop inventario-a`): después de unas pocas fallas, todos los pedidos van a B y las consultas siguen respondiendo.
-3. Prendemos A de nuevo: a los 30 segundos vuelve a recibir pedidos.
+1. Con las dos instancias arriba, el log muestra los pedidos repartidos entre `inventario1` e `inventario2`.
+2. Apagamos una (`docker compose stop inventario1`): después de unas pocas fallas, todos los pedidos van a `inventario2` y las consultas siguen respondiendo.
+3. La prendemos de nuevo (`docker compose start inventario1`): a los 30 segundos vuelve a recibir pedidos.
+
+El log de NGINX muestra la IP de cada instancia, no su nombre. Se averigua con `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'` y el nombre del contenedor. Las dos instancias y NGINX son del sistema que corre con Docker Compose: Inventario publicado para el otro grupo es una sola instancia en Render, sin NGINX ([ADR-017](ADR-017-contrato-propio.md)).
 
 ## Alternativas que descartamos
 - **Repartir la carga desde el gateway.** El gateway ya hace autenticación, permisos y ruteo, y sumarle el balanceo lo cargaba de otra responsabilidad. Además Transferencias no pasa por el gateway, así que el gateway tendría que repartir solo una parte de los pedidos y Transferencias necesitaría su propio reparto.

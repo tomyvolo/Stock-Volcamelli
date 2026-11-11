@@ -92,7 +92,8 @@ func (s *Servicio) ConsultarCambios() {
 // republicar vuelve a publicar los eventos del último cambio de estado, si no salieron porque RabbitMQ
 // no estaba. Si otro los está publicando, no hace nada. Publica sin el lock, con la transferencia como
 // estaba al buscar las pendientes: así un usuario que la quiere cancelar no espera los reintentos.
-// Inventario ignora un evento que ya aplicó, así que publicarlo de nuevo no mueve el stock dos veces.
+// Los eventos salen con un id nuevo, pero Inventario no libera una reserva ya liberada ni confirma una ya
+// confirmada, así que publicarlos de nuevo no mueve el stock dos veces.
 // Devuelve false si lo intentó y no pudo.
 func (s *Servicio) republicar(t *dominio.Transferencia) bool {
 	if !t.EventosPorPublicar {

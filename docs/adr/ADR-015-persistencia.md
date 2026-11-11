@@ -34,14 +34,14 @@ En esta misma base va una tabla más: la de eventos ya procesados, para no confi
 ### Transferencias
 Cada transferencia es un documento con lo que se pidió (incluida la hora de llegada deseada y las observaciones, si las hay), su estado actual, la lista de estados por los que pasó, el id que le dio Rumbo, el horario que propuso o comprometió Rumbo, la demora informada y el motivo si se rechazó o se canceló. En MongoDB escribir un documento es atómico, así que un cambio de estado y su historial se guardan juntos.
 
-Las consultas son tres: por id, por estado (los procesos de fondo buscan las que todavía no se mandaron a Rumbo o esperan respuesta) y por sucursal y fecha (las pantallas de los usuarios). Para eso ponemos índices en `estado` y en `sucursal_origen` + `fecha`.
+Las consultas son tres: por id, por estado (los procesos de fondo buscan las que todavía no se mandaron a Rumbo o esperan respuesta) y por sucursal y fecha (las pantallas de los usuarios). Para eso ponemos índices en `estado`, en `origen_id` + `creada_en` y en `destino_id` + `creada_en`. Además hay una colección `procesos` con un solo documento: hasta qué fecha leímos los cambios de Rumbo.
 
 Elegimos MongoDB porque una transferencia siempre se lee y se escribe entera, y no se cruza con datos de otras tablas. En una base relacional la tendríamos repartida en dos tablas (transferencia e historial de estados) y habría que juntarlas en cada lectura. Además, lo que guardamos de las respuestas de Rumbo cambia según el caso: un rechazo trae un motivo, una reserva trae su franja, un traslado en curso puede traer una demora. En un documento eso entra sin agregar columnas que quedan vacías la mayoría de las veces.
 
 ## Validación
 Validamos el uso de MySQL con el sistema levantado con Docker Compose:
 
-- **Una base por servicio.** Usuarios e Inventario tienen cada uno su MySQL, y los logs van a un tercero. Cada base se arma sola al levantar Docker Compose, con sus tablas y datos de prueba.
+- **Una base por servicio.** Usuarios, Sucursales e Inventario tienen cada uno su MySQL, y los logs van a un cuarto MySQL que no es de ningún servicio. Cada base se arma sola al levantar Docker Compose, con sus tablas y datos de prueba.
 - **El stock disponible sale de la base.** La tabla de stock guarda el total y lo reservado, y la consulta devuelve la resta. Con los datos de prueba, el producto 1 en la sucursal 1 tiene 46 unidades y 4 reservadas, y la consulta devuelve 42.
 - **La base no deja que lo reservado supere el total**, con una restricción `CHECK` en la tabla.
 - **Ninguna consulta espera más de 2 segundos.** La conexión de cada servicio a MySQL tiene `timeout`, `readTimeout` y `writeTimeout` de 2 segundos, como pide [ADR-010](ADR-010-resiliencia.md).
@@ -50,7 +50,7 @@ Validamos el uso de MySQL con el sistema levantado con Docker Compose:
 - **Seguir con PostgreSQL.** Funcionaba igual, pero con las herramientas que usamos en Go nos resulta más fácil trabajar con MySQL.
 
 ## Consecuencias
-- Hay que levantar cuatro bases (tres MySQL y un MongoDB) y configurar cada una.
+- Hay que levantar cinco bases (cuatro MySQL, uno de ellos solo para logs, y un MongoDB) y configurar cada una.
 - Una transferencia queda guardada en Transferencias y el stock que mueve queda en Inventario, en bases distintas. Por eso no podemos confirmar las dos cosas juntas con una transacción: Transferencias avisa con un evento e Inventario confirma o libera por su cuenta.
 - Las reservas pueden durar días, mientras el traslado no termina.
 - Las reservas y los eventos procesados se guardan siempre, así que esas tablas crecen con el tiempo.

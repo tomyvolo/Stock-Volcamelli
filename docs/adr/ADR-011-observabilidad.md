@@ -129,7 +129,7 @@ Los ponemos sobre lo que publicamos, porque es lo que usa el otro grupo:
 | Velocidad de las consultas del contrato | 95 % responden en menos de 500 ms | Ventana de 1 hora |
 
 ### Alertas
-Las armamos en Grafana sobre las mismas métricas del tablero:
+Las definimos sobre las mismas métricas del tablero, pero todavía no las cargamos en el provisioning de Grafana: en una instalación limpia no hay ninguna regla. Son estas:
 
 | Alerta | Cuándo |
 |---|---|
@@ -138,7 +138,7 @@ Las armamos en Grafana sobre las mismas métricas del tablero:
 | Servicio caído | Prometheus no puede leer `/metrics` de un servicio por 1 minuto |
 | Cola de errores con mensajes | Se mandó al menos un mensaje a la cola de errores |
 
-Los umbrales salen de los objetivos de servicio y se ajustan con los resultados de las pruebas de carga ([ADR-013](ADR-013-capacidad-y-costos.md)). Las alertas se ven en Grafana; el canal de aviso (mail o Discord) se elige al desplegar.
+Los umbrales salen de los objetivos de servicio y se ajustan con los resultados de las pruebas de carga ([ADR-013](ADR-013-capacidad-y-costos.md)). Cuando estén cargadas se van a ver en Grafana; el canal de aviso (mail o Discord) se elige al desplegar. Mientras tanto, las fallas se ven en el tablero.
 
 ## Consecuencias
 - Son tres contenedores más (Prometheus, Grafana y el MySQL de logs) para levantar en cada entorno.

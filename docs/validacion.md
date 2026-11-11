@@ -6,22 +6,22 @@ Las secciones 1 a 7 son de la primera validación. De la 8 en adelante están la
 
 ## 1. Login y alta de usuarios
 
-Con un token de director creamos un usuario `INTEGRACION` y después hicimos login con ese usuario, como lo haría el grupo consumidor.
+Con un token de director creamos un vendedor y después hicimos login con ese usuario. La primera vez lo hicimos con un usuario `INTEGRACION`, el rol que usaba el grupo consumidor antes de que el contrato pasara a la API key (2.0.0). Ese rol ya no existe, así que el 11/11/2026 repetimos con un vendedor las pruebas de esta sección y de las secciones 2 y 6, con los mismos resultados.
 
 | Prueba | Pedido | Resultado |
 |---|---|---|
 | Login con contraseña incorrecta | `POST /api/auth/login` | `401` `INVALID_CREDENTIALS` |
-| El director crea un usuario `INTEGRACION` | `POST /api/create-users` | `201`, devuelve el usuario sin la contraseña |
+| El director crea un vendedor | `POST /api/create-users` | `201`, devuelve el usuario sin la contraseña |
+| El director crea un usuario con rol `INTEGRACION` | `POST /api/create-users` | `400` `INVALID_REQUEST` "el rol no existe." |
 | El mismo email otra vez | `POST /api/create-users` | `409` `EMAIL_TAKEN` |
 | Un vendedor intenta crear un usuario | `POST /api/create-users` | `403` `FORBIDDEN` (lo frena el gateway) |
 | Un admin de sucursal intenta crear otro admin | `POST /api/create-users` | `403` `FORBIDDEN` (lo frena Usuarios) |
 | Un admin de sucursal crea un vendedor de su sucursal | `POST /api/create-users` | `201` |
-| Login con el usuario `INTEGRACION` creado | `POST /api/auth/login` | `200`, con `token` y `expiresIn: 3600` |
-| La cuenta `INTEGRACION` intenta crear un usuario | `POST /api/create-users` | `403` `FORBIDDEN` |
+| Login con el vendedor creado | `POST /api/auth/login` | `200`, con `token` y `expiresIn: 3600` |
 
 ## 2. Las cuatro consultas del contrato
 
-Con el token de la cuenta `INTEGRACION`:
+Con el token de un vendedor, por el gateway. El grupo consumidor hace las mismas consultas directo a Inventario publicado, con su API key ([contrato](contracts/README.md), sección 14):
 
 | Consulta | Resultado |
 |---|---|
@@ -75,7 +75,7 @@ NGINX registra la IP de la instancia, no su nombre. Para saber cuál es cada una
 
 ## 6. Balanceo y caída de instancias
 
-Todas las consultas son `GET /api/branches/1/stock` con el token de `INTEGRACION`.
+Todas las consultas son `GET /api/branches/1/stock` con el token de un vendedor. El 11/11/2026 lo repetimos: 10 de 10 con `200` con las dos instancias, con `inventario1` apagada y al prenderla de nuevo.
 
 | Paso | Qué hicimos | Resultado |
 |---|---|---|
@@ -155,6 +155,16 @@ Validación de [ADR-018](adr/ADR-018-asistente.md).
 | Confirmar la tarjeta en `/api/assistant/confirm` | Creó la transferencia, que pasó a `PROGRAMADA` con el proceso de fondo |
 
 La primera vez que lo probamos contestó que la búsqueda no estaba disponible: Solr tardó en responder las primeras consultas después de arrancar e Inventario cortó por tiempo. Unos minutos después la misma pregunta anduvo.
+
+**Lo que el asistente no puede hacer (CA-33).** Una revisión externa encontró que, cuando un vendedor pedía un ajuste de stock, el asistente le preguntaba la sucursal de origen como si fuera una transferencia. No cambiaba nada, porque no tiene una herramienta de ajustes, pero CA-33 pide que responda que no puede. Sumamos al prompt qué puede hacer y que para lo demás conteste que no. El 11/11/2026, como vendedor:
+
+| Pregunta | Respuesta |
+|---|---|
+| "Hacé un ajuste de stock de +10 de azúcar en Córdoba Centro" | "No puedo realizar ajustes de stock desde el chat. Ese tipo de operación se hace en la pantalla correspondiente del sistema." |
+| "Creá un usuario vendedor para Nueva Córdoba" | "No puedo crear usuarios desde el chat…" |
+| "¿Cuánto stock de azúcar hay en Córdoba Centro?" | "En la sucursal Córdoba Centro hay 21 unidades de azúcar." |
+
+Una transferencia que no pasa por la sucursal del vendedor sí muestra la tarjeta, pero al confirmarla el sistema la rechaza ("Solo podés operar las transferencias que salen de tu sucursal o llegan a ella") y no crea nada.
 
 ## 12. Rumbo real
 
@@ -275,6 +285,8 @@ Las primeras búsquedas después de un rato sin uso respondieron `503`: Solr tar
 | Reducir más de lo disponible | `409` `INSUFFICIENT_STOCK` |
 | Cantidad 0 | `400` `INVALID_REQUEST` |
 
+El 11/11/2026 a las 11:08 lo volvimos a probar con la clave vigente del grupo consumidor: `/health` respondió `200`, `GET /api/products` sin clave `401`, y `GET /api/branches/1/stock` con la clave `200` con el stock de la sucursal y `X-Track-ID: 6c6558e718f6102aae3ddcdadd9ec2fc`. Esa madrugada, `GET /api/products?page=1&size=1` con la clave había devuelto `200` con Harina 000 y 10 productos en total. La clave no está en el repositorio.
+
 **Carga y caché: la corrida no sirvió.** Corrimos los escenarios de ADR-013 y la comparación con y sin caché, pero la notebook estaba saturada: la máquina virtual de Docker en su límite de memoria y menos de 1 GB libre en Windows. Con 10 workers el p95 ya fue de 1,5 segundos, y con 100 workers fallaron casi todos los pedidos (en la primera medición, con 50 workers el p95 quedaba debajo de 130 ms). Con o sin caché, el p95 quedó en los 2 segundos del gateway, así que no se puede comparar. Lo único que sí sirve es el porcentaje de aciertos: 98 % en Usuarios y 97 % en Sucursales. No cambiamos los números de ADR-013; repetimos las dos pruebas con la máquina libre.
 
 ## 15. Caché, control de tráfico, orden de la búsqueda y RabbitMQ caído
@@ -303,6 +315,17 @@ Ningún error en las seis corridas. El análisis está en [ADR-013](adr/ADR-013-
 | `429` `TOO_MANY_REQUESTS` | 20 |
 
 El `429` trae `Retry-After: 17` (los segundos que faltaban para el minuto siguiente) y el mensaje "demasiados pedidos, probá de nuevo en 17 segundos". Pasado el límite, el login también responde `429`. Que otra IP siga entrando lo prueba un test del gateway.
+
+**IP del cliente (D10).** Una revisión externa se salteó el límite cambiando `X-Forwarded-For` en cada pedido: con límite 1, desde la misma máquina, obtuvo `200`, `429` y otra vez `200`. Ahora el gateway usa la IP de la conexión y solo le cree a `X-Real-IP` cuando el pedido viene del NGINX del frontend ([ADR-010](adr/ADR-010-resiliencia.md)). El 11/11/2026, con el gateway reconstruido y el límite en 1 por minuto (`401` quiere decir que el pedido pasó el control y lo frenó la falta de token):
+
+| Desde | Encabezados | Resultado |
+|---|---|---|
+| La notebook, directo al gateway (`8080`) | `X-Forwarded-For: 1.1.1.1`, otra vez `1.1.1.1`, después `2.2.2.2` y `X-Real-IP: 3.3.3.3` | `401`, `429`, `429`, `429` |
+| La notebook, por el frontend (`8000`), en el minuto siguiente | `X-Forwarded-For: 4.4.4.4`, otra vez `4.4.4.4`, después `5.5.5.5` y `X-Real-IP: 6.6.6.6` | `401`, `429`, `429`, `429` |
+| Otro cliente, por el frontend (desde adentro del contenedor del frontend) | Ninguno | `401` y después `429`: tiene su propio cupo |
+
+La notebook comparte el cupo entre el acceso directo y el del frontend, porque para Docker es la misma IP. Después volvimos el límite a 300.
+
 
 **Orden de la búsqueda (D6).** Con `q=paquete` (7 resultados):
 
@@ -338,7 +361,7 @@ En una primera corrida del arreglo, cancelar respondió `503` a los 5 segundos a
 ## Cómo repetir estas pruebas
 
 1. `docker compose down -v` y `docker compose up --build -d`.
-2. Login con el director y con la cuenta `INTEGRACION`. Las contraseñas las tiene el equipo.
+2. Login con el director y con un vendedor. Las contraseñas las tiene el equipo.
 3. Las consultas de las secciones 1 a 3 con `curl -i`, anotando el código y el `X-Track-ID`.
 4. Pegar un `X-Track-ID` en el campo **Track ID** del tablero y buscar el mismo valor en `docker compose logs nginx`.
 5. Los pasos A a D de la sección 6 con `docker compose stop` y `docker compose start`.
@@ -360,5 +383,7 @@ En una primera corrida del arreglo, cancelar respondió `503` a los 5 segundos a
 | Con la máquina cargada, Transferencias se cerraba al arrancar: el MySQL de logs tardó más de 2 segundos en decirle si existía la tabla, intentó crearla y falló porque ya estaba | Los 8 servicios abren la conexión de logs sin probarla y crean la tabla en segundo plano, como ya hacía Inventario ([ADR-011](adr/ADR-011-observabilidad.md)) |
 | `docker compose up` fallaba con "mongo-transferencias is unhealthy" aunque Mongo respondía | El chequeo de salud con `mongosh` pasaba los 3 segundos con la máquina cargada. Lo subimos a 10 |
 | Cancelar respondía `503` aunque la cancelación se aplicaba, y se mandaba a Rumbo una cancelación de más | Lock por transferencia, y los datos de Rumbo más viejos que la cancelación se ignoran (sección 12) |
+| Cambiando `X-Forwarded-For` en cada pedido se salteaba el control de tráfico: Gin le creía ese encabezado a cualquiera. Lo encontró una revisión externa | El gateway usa la IP de la conexión y solo le cree a `X-Real-IP` cuando el pedido viene del NGINX del frontend, que la pisa con la IP real (sección 15) |
+| Cuando un vendedor le pedía un ajuste de stock, el asistente preguntaba la sucursal de origen en lugar de decir que no puede (CA-33). Lo encontró una revisión externa | Le sumamos al prompt qué puede hacer y que para lo demás responda que no (sección 11) |
 | Con RabbitMQ caído, cancelar una transferencia la dejaba `CANCELADA` pero la reserva seguía activa cuando RabbitMQ volvía: el evento quedaba solo en el log de error. Lo encontró una revisión externa | Transferencias guarda la marca de eventos por publicar junto con el cambio de estado, y el proceso de fondo los vuelve a publicar hasta que salen, sin tener la transferencia tomada ([ADR-016](adr/ADR-016-comunicacion-entre-servicios.md)). Probado con el sistema levantado: el disponible volvió solo a los 21 segundos de levantar RabbitMQ (sección 15) |
 | Con RabbitMQ caído, crear una transferencia respondía `503` a los 5 segundos aunque quedaba creada y reservada; si el usuario volvía a intentar, la creaba dos veces. Lo encontró una revisión externa | Crear y cancelar publican los eventos en segundo plano, como ya hacía Inventario ([ADR-010](adr/ADR-010-resiliencia.md)). Lo probamos con RabbitMQ apagado: `201` en 0,74 segundos (sección 15) |

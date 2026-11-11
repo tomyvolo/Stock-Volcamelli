@@ -38,6 +38,7 @@ El gateway acepta hasta **300 pedidos por minuto de cada IP**. Los que sobran re
 
 - Contamos por minuto del reloj: al empezar el minuto siguiente, todos los contadores vuelven a cero. Es un mapa en memoria con un mutex, que alcanza porque el gateway corre en una sola instancia.
 - El control va antes de validar el token, así también frena a quien prueba contraseñas en el login.
+- La IP es la de la conexión. Solo en los pedidos que vienen del NGINX del frontend la tomamos del encabezado `X-Real-IP`, que ese NGINX pisa siempre con la IP real del navegador. Al NGINX lo reconocemos por su nombre en la red de Docker (`TRUSTED_PROXY_HOST=frontend`), porque su IP la asigna Docker. Los encabezados que manda cualquier otro cliente se ignoran. Al principio Gin le creía a `X-Forwarded-For` de cualquiera, y una revisión externa se salteó el límite cambiando ese encabezado en cada pedido.
 - 300 por minuto son 5 por segundo, mucho más de lo que genera una persona usando el frontend.
 - El límite sale de la variable `RATE_LIMIT_PER_MINUTE`. En las pruebas de carga la ponemos en `0`, que lo apaga, porque todos los pedidos salen de la misma IP ([ADR-013](ADR-013-capacidad-y-costos.md)).
 - Los `429` se ven en el tablero de Grafana como cualquier otro código de respuesta ([ADR-011](ADR-011-observabilidad.md)).
@@ -67,7 +68,7 @@ Los errores de negocio (`422`, `409`) no cuentan como fallas: Rumbo está andand
 | **Tiempo Real** | Todo | Las pantallas no se actualizan solas; el usuario recarga ([ADR-019](ADR-019-tiempo-real.md)) |
 | **El MySQL de logs** | Todo | Los logs de ese rato no aparecen en Grafana; quedan solo en la consola de Docker ([ADR-011](ADR-011-observabilidad.md)). Cada log espera como mucho 200 ms, así que los pedidos se demoran un poco pero siguen respondiendo. Lo mismo si en vez de caerse se satura ([ADR-013](ADR-013-capacidad-y-costos.md)) |
 | **NGINX** | Todo lo que no es Inventario | Lo mismo que si se cayeran las dos instancias de Inventario |
-| **Gateway** | Los procesos de fondo (Rumbo y eventos) | Todo lo que viene de afuera: el frontend y el otro grupo |
+| **Gateway** | Los procesos de fondo (Rumbo y eventos), e Inventario publicado para el otro grupo, que no pasa por el gateway ([ADR-017](ADR-017-contrato-propio.md)) | Todo lo que viene del frontend |
 
 Cada servicio necesita su propia base para arrancar: si no está, se cierra y Docker o Render lo vuelven a arrancar. Si la base se cae después, los pedidos que la necesitan fallan por su timeout y, cuando vuelve, el servicio sigue solo. El MySQL de logs es distinto: ningún servicio lo necesita para arrancar, y mientras no está los logs salen por consola ([ADR-011](ADR-011-observabilidad.md)).
 
@@ -83,5 +84,6 @@ Cuando algo responde `503`, el frontend muestra "no disponible por el momento" s
 - Varias personas detrás de la misma IP (por ejemplo, una red de la facultad) comparten los 300 pedidos por minuto. Para el uso que esperamos alcanza; si no, se sube con la variable.
 - Con Rumbo caído, las transferencias se acumulan como `RESERVADA` y esas unidades no se pueden usar. Si pasa más de 24 horas, se rechazan y se liberan.
 - Cuando el circuit breaker está abierto, nos enteramos de los cambios de Rumbo con hasta 30 segundos más de atraso.
+- Si RabbitMQ está andando pero la cola de Inventario no existe, un evento de Transferencias se puede perder ([ADR-016](ADR-016-comunicacion-entre-servicios.md)).
 - El gateway, NGINX y RabbitMQ son una sola instancia cada uno. Si se caen, se pierde una parte grande del sistema hasta que se vuelven a levantar.
 - Los timeouts se validaron con las caídas de instancias ([ADR-012](ADR-012-balanceo-de-carga.md)) y con la prueba de carga ([ADR-013](ADR-013-capacidad-y-costos.md)): hasta unas 500 consultas por segundo ningún pedido llega a los 2 segundos. Por encima, los que los pasan son los que esperan al MySQL de logs.
