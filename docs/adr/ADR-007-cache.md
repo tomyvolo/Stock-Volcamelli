@@ -51,7 +51,7 @@ El porcentaje de aciertos lo calcula Grafana con esos contadores, y el tiempo de
 
 Para comparar, corremos la misma prueba de carga dos veces, una con `CACHE_ENABLED=false` y otra con la caché prendida: usuarios abriendo la sección de sucursales y el panel de usuarios, y creando transferencias al mismo tiempo. Esperamos que con caché baje el tiempo de esas consultas y que los MySQL de Usuarios y Sucursales reciban muchas menos.
 
-Lo medimos el 10/11/2026 ([ADR-013](ADR-013-capacidad-y-costos.md)): con caché, esos MySQL recibieron más del 99 % menos de consultas (de entre 1.100 y 1.600 a unas 10 por corrida de 20 segundos). En las listas el p95 bajó a menos de la mitad: de 1107 a 416 ms con todas las sucursales y de 583 a 320 ms con los usuarios de una sucursal. Con una sucursal por id casi no cambió, porque esa consulta ya es muy rápida en MySQL.
+Lo medimos el 10/11/2026 ([ADR-013](ADR-013-capacidad-y-costos.md)): con caché, esos MySQL recibieron más del 99 % menos de consultas (de entre 1.100 y 1.600 a unas 10 por corrida de 20 segundos). En las listas el p95 bajó: de 1107 a 416 ms con todas las sucursales (62 % menos) y de 583 a 320 ms con los usuarios de una sucursal (45 % menos). Con una sucursal por id el p95 empeoró un poco, de 578 a 664 ms: esa consulta ya es muy rápida en MySQL, y con las corridas en la misma notebook la diferencia entra en lo que varía de una corrida a otra.
 
 ## Alternativas que descartamos
 - **Cachear el stock de cada sucursal.** Es la consulta más pesada, pero el stock cambia con cada reserva, traslado y ajuste, así que la caché mostraría un disponible viejo casi siempre.

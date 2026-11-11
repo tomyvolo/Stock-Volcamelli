@@ -57,8 +57,8 @@ type Repositorio interface {
 	// Obtener devuelve ErrNoExiste si no hay una transferencia con ese id.
 	Obtener(id string) (*dominio.Transferencia, error)
 	Listar(filtro Filtro) ([]*dominio.Transferencia, int64, error)
-	// PendientesDeEnvio son las que hay que mandarle al transporte: sin reservar, con una cancelación
-	// por mandar, o con una reserva por liberar.
+	// PendientesDeEnvio son las que tienen algo por mandar: sin reservar en el transporte, con una
+	// cancelación por mandar, con una reserva por liberar o con eventos por publicar.
 	PendientesDeEnvio() ([]*dominio.Transferencia, error)
 	// UltimaConsulta es hasta dónde leímos los cambios del transporte.
 	UltimaConsulta() (time.Time, error)

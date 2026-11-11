@@ -530,6 +530,110 @@ func TestCancelar_AntesDeReservar(t *testing.T) {
 	}
 }
 
+// Cancelar con RabbitMQ caído: la transferencia queda CANCELADA con los eventos marcados por publicar,
+// y cuando RabbitMQ vuelve, el proceso de fondo publica TrasladoCancelado sin que nadie haga nada.
+func TestCancelar_SinRabbitMQ_SePublicaAlVolver(t *testing.T) {
+	e := nuevoEscenario()
+	transferencia, _ := e.servicio.Crear(pedido(1), vendedor1, "track-1")
+	e.eventos.rabbitMQ(true)
+
+	if _, err := e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta"); err != nil {
+		t.Fatalf("No se pudo cancelar: %v", err)
+	}
+	if slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCancelado) || !transferencia.EventosPorPublicar {
+		t.Fatalf("Con RabbitMQ caído se esperaba la marca de eventos por publicar, pero quedó: %+v", transferencia)
+	}
+	e.servicio.EnviarPendientes()
+	if !transferencia.EventosPorPublicar {
+		t.Fatalf("Con RabbitMQ todavía caído, la marca tenía que seguir")
+	}
+
+	e.eventos.rabbitMQ(false)
+	e.servicio.EnviarPendientes()
+
+	if !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCancelado) || transferencia.EventosPorPublicar {
+		t.Errorf("Al volver RabbitMQ se esperaba TrasladoCancelado y la marca sacada, pero se publicó %v (marca %v)",
+			e.eventos.tipos(transferencia.ID), transferencia.EventosPorPublicar)
+	}
+}
+
+// Lo mismo con un traslado que Rumbo informa COMPLETADO mientras RabbitMQ está caído.
+func TestCambios_SinRabbitMQ_SePublicaAlVolver(t *testing.T) {
+	e := nuevoEscenario()
+	transferencia := e.creadaYEnviada(t, pedido(4))
+	e.eventos.rabbitMQ(true)
+	e.transporte.cambios = []dominio.Novedad{e.novedad(transferencia, dominio.Completada)}
+
+	e.servicio.ConsultarCambios()
+	if transferencia.Estado != dominio.Completada || !transferencia.EventosPorPublicar {
+		t.Fatalf("Se esperaba COMPLETADA con la marca de eventos por publicar, pero quedó: %+v", transferencia)
+	}
+
+	e.eventos.rabbitMQ(false)
+	e.servicio.EnviarPendientes()
+
+	if !slices.Contains(e.eventos.tipos(transferencia.ID), puertos.TrasladoCompletado) || transferencia.EventosPorPublicar {
+		t.Errorf("Al volver RabbitMQ se esperaba TrasladoCompletado y la marca sacada, pero se publicó %v", e.eventos.tipos(transferencia.ID))
+	}
+}
+
+// Con RabbitMQ andando, la marca se saca al publicar y el proceso de fondo no publica de nuevo.
+func TestEnviarPendientes_NoRepublicaLoQueSalio(t *testing.T) {
+	e := nuevoEscenario()
+	transferencia, _ := e.servicio.Crear(pedido(1), vendedor1, "track-1")
+	e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta")
+	e.eventos.rabbitMQ(false)
+
+	e.servicio.EnviarPendientes()
+
+	if transferencia.EventosPorPublicar || e.eventos.intentos != 0 {
+		t.Errorf("No se esperaba volver a publicar, pero hubo %d intentos (marca %v)", e.eventos.intentos, transferencia.EventosPorPublicar)
+	}
+}
+
+// Mientras el proceso de fondo reintenta publicar con RabbitMQ caído, cancelar no espera esos reintentos:
+// si esperara, el gateway cortaría a los 5 segundos aunque la cancelación se aplicara.
+func TestCancelar_NoEsperaAlReintentoDePublicar(t *testing.T) {
+	e := nuevoEscenario()
+	e.servicio.Transporte = nil // que la vuelta solo republique
+	e.eventos.rabbitMQ(true)
+	transferencia, _ := e.servicio.Crear(pedido(1), vendedor1, "track-1")
+	e.eventos.rabbitMQ(true)
+	e.eventos.lento = 300 * time.Millisecond
+
+	termino := make(chan struct{})
+	go func() { e.servicio.EnviarPendientes(); close(termino) }()
+	time.Sleep(50 * time.Millisecond)
+	inicio := time.Now()
+	_, err := e.servicio.Cancelar(transferencia.ID, vendedor1, "Ya no hace falta")
+	demora := time.Since(inicio)
+	<-termino
+
+	if err != nil {
+		t.Fatalf("No se esperaba un error, pero falló: %v", err)
+	}
+	if demora > 100*time.Millisecond {
+		t.Errorf("Cancelar tenía que responder sin esperar el reintento de publicar, pero tardó %v", demora)
+	}
+}
+
+// Si RabbitMQ sigue caído, en cada vuelta se prueba con una sola transferencia, no con todas.
+func TestEnviarPendientes_UnIntentoPorVueltaSinRabbitMQ(t *testing.T) {
+	e := nuevoEscenario()
+	primera, _ := e.servicio.Crear(pedido(1), vendedor1, "track-1")
+	segunda, _ := e.servicio.Crear(pedido(1), vendedor1, "track-2")
+	e.eventos.rabbitMQ(true)
+	e.servicio.Cancelar(primera.ID, vendedor1, "Ya no hace falta")
+	e.servicio.Cancelar(segunda.ID, vendedor1, "Ya no hace falta")
+	e.eventos.rabbitMQ(true) // pone en cero los intentos de las dos cancelaciones
+
+	e.servicio.EnviarPendientes()
+
+	if e.eventos.intentos != 1 {
+		t.Errorf("Se esperaba un solo intento de publicar en la vuelta, pero hubo %d", e.eventos.intentos)
+	}
+}
+
 // CA-10: una transferencia PROGRAMADA se cancela a través de Rumbo y se libera la reserva.
 func TestCancelar_Programada(t *testing.T) {
 	e := nuevoEscenario()

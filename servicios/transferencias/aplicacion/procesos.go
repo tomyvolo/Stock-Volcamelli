@@ -13,16 +13,22 @@ import (
 // RECHAZADA y se libera la reserva.
 const PlazoParaReservar = 24 * time.Hour
 
-// EnviarPendientes manda lo que quedó por mandar: las reservas nuevas a Rumbo, las cancelaciones y las
-// liberaciones de las transferencias fallidas. Lo que no se puede mandar ahora queda para la vuelta siguiente.
-// Sin Rumbo configurado, solo libera.
+// EnviarPendientes manda lo que quedó por mandar: los eventos que no salieron, las reservas nuevas a Rumbo,
+// las cancelaciones y las liberaciones de las transferencias fallidas. Lo que no se puede mandar ahora queda
+// para la vuelta siguiente. Sin Rumbo configurado, solo publica y libera.
 func (s *Servicio) EnviarPendientes() {
 	pendientes, err := s.Repo.PendientesDeEnvio()
 	if err != nil {
 		s.Registro.Escribir("", "error", "no se pudieron leer las transferencias pendientes: "+err.Error())
 		return
 	}
+	// Si un evento no sale, RabbitMQ sigue sin estar: en esta vuelta no probamos con las demás, así no
+	// esperamos los reintentos de cada una antes de mandarle lo suyo a Rumbo.
+	sinRabbitMQ := false
 	for _, pendiente := range pendientes {
+		if !sinRabbitMQ && !s.republicar(pendiente) {
+			sinRabbitMQ = true
+		}
 		s.conLock(pendiente.ID, func(t *dominio.Transferencia) {
 			s.liberar(t)
 			if s.Transporte != nil {
@@ -81,6 +87,28 @@ func (s *Servicio) ConsultarCambios() {
 	if err := s.Repo.GuardarUltimaConsulta(hasta); err != nil {
 		s.Registro.Escribir("", "error", "no se pudo guardar la última consulta a Rumbo: "+err.Error())
 	}
+}
+
+// republicar vuelve a publicar los eventos del último cambio de estado, si no salieron porque RabbitMQ
+// no estaba. Si otro los está publicando, no hace nada. Publica sin el lock, con la transferencia como
+// estaba al buscar las pendientes: así un usuario que la quiere cancelar no espera los reintentos.
+// Los eventos salen con un id nuevo, pero Inventario no libera una reserva ya liberada ni confirma una ya
+// confirmada, así que publicarlos de nuevo no mueve el stock dos veces.
+// Devuelve false si lo intentó y no pudo.
+func (s *Servicio) republicar(t *dominio.Transferencia) bool {
+	if !t.EventosPorPublicar {
+		return true
+	}
+	if _, publicando := s.enVuelo.LoadOrStore(t.ID, true); publicando {
+		return true
+	}
+	defer s.enVuelo.Delete(t.ID)
+	if !s.enviar(s.eventos(t)) {
+		return false
+	}
+	s.conLock(t.ID, func(actual *dominio.Transferencia) { s.publicado(actual, t.Estado) })
+	s.Registro.Escribir(t.TrackID, "info", fmt.Sprintf("eventos de la transferencia %s (%s) publicados en el reintento", t.ID, t.Estado))
+	return true
 }
 
 // liberar le pide a Inventario que libere la reserva de una transferencia fallida, hasta que responda.
@@ -242,10 +270,13 @@ func (s *Servicio) guardar(t *dominio.Transferencia) bool {
 }
 
 // guardarYPublicar publica recién después de guardar: así un evento nunca anuncia algo que no quedó guardado.
+// La marca de eventos por publicar se guarda junto con el cambio de estado, así no se pierden si RabbitMQ
+// no está. Devuelve si se guardó, aunque los eventos no hayan salido.
 func (s *Servicio) guardarYPublicar(t *dominio.Transferencia) bool {
+	t.EventosPorPublicar = true
 	if !s.guardar(t) {
 		return false
 	}
-	s.publicar(t)
+	s.publicarSinEsperar(t)
 	return true
 }

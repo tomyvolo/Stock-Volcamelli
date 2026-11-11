@@ -24,6 +24,8 @@ services:
       ASISTENTE_URL: http://asistente:8087
       # Control de tráfico: pedidos por minuto que acepta de cada IP. En las pruebas de carga se pone en 0.
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
+      # El único proxy al que le creemos la IP del cliente (X-Real-IP): el NGINX del frontend.
+      TRUSTED_PROXY_HOST: frontend
     depends_on:
       mysql-logs:
         condition: service_healthy

@@ -184,7 +184,7 @@ En los ejemplos, "un vendedor" es un vendedor de la sucursal de origen o de dest
 
 **CA-21 — Permisos del admin de sucursal.** Un admin de la sucursal 3 puede todo lo del vendedor, más hacer ajustes de stock en la 3 y dar de alta vendedores de la 3. Cuando intenta ajustar el stock de otra sucursal, crear un admin o crear una sucursal, entonces se rechaza.
 
-**CA-22 — Permisos del director.** El director puede crear, cancelar y responder cualquier transferencia, hacer ajustes en cualquier sucursal y dar de alta usuarios de cualquier rol, sucursales y productos.
+**CA-22 — Permisos del director.** El director puede crear y cancelar cualquier transferencia, hacer ajustes en cualquier sucursal y dar de alta usuarios de cualquier rol, sucursales y productos.
 
 **CA-23 — Usuarios de la empresa.** Cuando cualquier usuario abre el panel de usuarios, entonces ve a los usuarios de todas las sucursales con su nombre, email, rol y sucursal, y los puede filtrar por sucursal. Nunca ve contraseñas.
 

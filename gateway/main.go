@@ -66,9 +66,14 @@ func main() {
 		}
 		rateLimit = parsed
 	}
-	// Uno solo para todas las rutas, así cada IP tiene un único contador.
-	limiter := utils.RateLimit(rateLimit)
+	// Uno solo para todas las rutas, así cada IP tiene un único contador. Del único proxy que le creemos
+	// la IP del cliente es el NGINX del frontend (TRUSTED_PROXY_HOST=frontend en Docker).
+	limiter := utils.RateLimit(rateLimit, utils.TrustedHost(os.Getenv("TRUSTED_PROXY_HOST")))
 
+	// Gin por defecto le cree a X-Forwarded-For de cualquiera. Así ClientIP es siempre la IP de la conexión.
+	if err := router.SetTrustedProxies(nil); err != nil {
+		log.Fatalf("no se pudieron configurar los proxies de confianza: %v", err)
+	}
 	router.Use(gin.Recovery())
 	// Estas dos rutas quedan fuera del grupo medido para no contar las sondas.
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))

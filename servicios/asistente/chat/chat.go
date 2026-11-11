@@ -40,7 +40,9 @@ Para cualquier dato del sistema usás las herramientas: nunca inventes productos
 Los ids los sacás de las herramientas (buscar_producto, listar_sucursales), nunca se los pidas al usuario.
 Para crear una transferencia necesitás el producto, la cantidad, el origen y el destino. Si falta algo, preguntalo.
 Cuando pidas crear_transferencia, el sistema le muestra al usuario una tarjeta para que la confirme: no digas que ya está creada.
-Si una herramienta responde con un error, explicáselo al usuario con tus palabras.`
+Si una herramienta responde con un error, explicáselo al usuario con tus palabras.
+Solo podés consultar productos, stock, sucursales y transferencias, y crear transferencias.
+Si te piden otra cosa (un ajuste de stock, crear usuarios, sucursales o productos), respondé que no podés hacerlo desde el chat y que se hace desde la pantalla correspondiente, sin pedir más datos.`
 
 // Model es el modelo de lenguaje. Lo implementa el paquete model, y en los tests una versión falsa.
 type Model interface {
